@@ -1,0 +1,30 @@
+{
+  "name": "qiscus-live-chat-wa-handoff",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260917.1",
+    "@types/bun": "latest",
+    "bun-types": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "alchemy": "2.0.0-beta.77",
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
+    "hono": "^4"
+  },
+  "overrides": {
+    "effect": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
+    "@effect/platform-node-shared": "4.0.0-rc.112"
+  }
+}
