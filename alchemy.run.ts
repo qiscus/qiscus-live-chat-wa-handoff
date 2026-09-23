@@ -35,6 +35,12 @@ export default Alchemy.Stack(
         htmlHandling: "none",
       },
       workersDev: true,
+      // Keep the existing sample alias attached when updating this Worker.
+      // Replace with a domain/zone you control before deploying your own copy.
+      domain: {
+        name: "handoff.zroconf.web.id",
+        zoneName: "zroconf.web.id",
+      },
     })
 
     return { url: worker.url }

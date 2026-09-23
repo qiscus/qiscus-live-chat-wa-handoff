@@ -73,6 +73,6 @@ node node_modules/.bin/alchemy plan --detailed
 node node_modules/.bin/alchemy deploy --yes --no-input
 ```
 
-The sample uses the account's `workers.dev` URL and intentionally does not bind
-to a Qiscus- or customer-specific custom domain. Configure a custom domain only
-in an account and zone you control.
+The existing deployment also uses `handoff.zroconf.web.id` as a sample alias.
+Before deploying your own copy, replace that domain and zone in `alchemy.run.ts`
+with a domain in a Cloudflare zone you control, or remove the `domain` property.
