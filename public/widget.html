@@ -87,6 +87,14 @@
         return null;
       }
 
+      // TEMPORARY, local dev only: QismoFull strips #t= from the address bar
+      // before exchanging it. Put it back on localhost so a hard refresh can
+      // re-exchange the same token (qismo-api answers a reused token within
+      // its session window as "resumed") instead of needing a new invite link.
+      // Deployed hosts keep the strip-the-token behaviour.
+      var isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      var initialHash = location.hash;
+
       function mount(env) {
         new QismoFull({
           target: document.body,
@@ -102,6 +110,9 @@
             },
           },
         });
+        if (isLocal && initialHash && !location.hash) {
+          history.replaceState(null, "", location.pathname + location.search + initialHash);
+        }
       }
 
       var env = {
