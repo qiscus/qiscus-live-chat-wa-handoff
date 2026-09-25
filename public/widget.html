@@ -35,20 +35,23 @@
   </head>
   <body>
     <div id="handover-status">Menghubungkan…</div>
-    <script src="https://qismo-stag2.qiscus.io/js/qismo-full-v5.js"></script>
     <script>
       /**
        * Mount the same hosted QismoFull bundle as the Installation Code
        * snippet. The token stays in the URL fragment, never sent in requests.
        *
-       * The bundle URL and default API/iframe hosts use staging2 for now;
-       * replace qismo-stag2 with the production host after promotion. API and
-       * iframe hosts can be overridden from the page_url settings.
-       *   https://<worker>/widget.html?baseUrl=...&iframeUrl=...#t=<token>
+       * Production is the default. page_url may override the environment:
+       *   https://<worker>/widget.html?scriptUrl=...&baseUrl=...&iframeUrl=...#t=<token>
+       * The wrapper passes baseUrl/iframeUrl as QismoFull options because
+       * deployed bundles do not read them from the query string themselves.
+       * All three only accept Qiscus hosts (or localhost), otherwise a crafted
+       * link could run foreign JS or send the invite token elsewhere.
        */
-      var qs = new URLSearchParams(location.search);
-      var baseUrl = qs.get("baseUrl") || "https://qismo-stag2.qiscus.io";
-      var iframeUrl = qs.get("iframeUrl") || "https://qismo-stag2.qiscus.io";
+      var DEFAULTS = {
+        scriptUrl: "https://qismo.qiscus.com/js/qismo-full-v5.js",
+        baseUrl: "https://qismo.qiscus.com",
+        iframeUrl: "https://omnichannel.qiscus.com",
+      };
       var statusEl = document.getElementById("handover-status");
 
       var PESAN = {
@@ -58,26 +61,66 @@
         session_over: "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
         too_many_requests: "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
         network_error: "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
+        invalid_script: "Konfigurasi widget tidak valid.",
         unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
       };
 
-      new QismoFull({
-        target: document.body,
-        props: {
-          staging: true,
-          options: {
-            baseUrl: baseUrl,
-            qismoIframeUrl: iframeUrl,
+      // Query override, restricted to Qiscus hosts over HTTPS or localhost.
+      // Returns the default when absent, null when present but not allowed.
+      function fromQuery(name) {
+        var raw = new URLSearchParams(location.search).get(name);
+        if (!raw) return DEFAULTS[name];
+        try {
+          var url = new URL(raw);
+          var host = url.hostname;
+          var local = host === "localhost" || host === "127.0.0.1";
+          var qiscus = /(^|\.)qiscus\.(com|io)$/.test(host);
+          if ((url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
+            return name === "scriptUrl" ? url.href : url.origin;
+          }
+        } catch (_) {}
+        return null;
+      }
+
+      function mount(env) {
+        new QismoFull({
+          target: document.body,
+          props: {
+            staging: false,
+            options: { baseUrl: env.baseUrl, qismoIframeUrl: env.iframeUrl },
+            onEvent: function (event) {
+              if (event.event_name === "qiscus:handoff-ready") {
+                statusEl.style.display = "none";
+              } else if (event.event_name === "qiscus:handoff-error") {
+                statusEl.textContent = PESAN[event.code] || PESAN.unknown;
+              }
+            },
           },
-          onEvent: function (event) {
-            if (event.event_name === "qiscus:handoff-ready") {
-              statusEl.style.display = "none";
-            } else if (event.event_name === "qiscus:handoff-error") {
-              statusEl.textContent = PESAN[event.code] || PESAN.unknown;
-            }
-          },
-        },
-      });
+        });
+      }
+
+      var env = {
+        scriptUrl: fromQuery("scriptUrl"),
+        baseUrl: fromQuery("baseUrl"),
+        iframeUrl: fromQuery("iframeUrl"),
+      };
+      if (!env.scriptUrl || !env.baseUrl || !env.iframeUrl) {
+        statusEl.textContent = PESAN.invalid_script;
+      } else {
+        var script = document.createElement("script");
+        script.src = env.scriptUrl;
+        script.onload = function () {
+          if (typeof QismoFull !== "function") {
+            statusEl.textContent = PESAN.network_error;
+            return;
+          }
+          mount(env);
+        };
+        script.onerror = function () {
+          statusEl.textContent = PESAN.network_error;
+        };
+        document.head.appendChild(script);
+      }
 
       window.addEventListener("message", function (e) {
         if (!e.data || !e.data.event_name) return;

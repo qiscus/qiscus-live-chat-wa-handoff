@@ -22,12 +22,11 @@ copy a token into the page URL yourself. The fragment is not sent in HTTP reques
 
 ## Page URL configuration
 
-The sample currently uses Qiscus staging2 while the handoff feature is being
-promoted:
+The sample defaults to Qiscus production:
 
-- Hosted widget bundle: `https://qismo-stag2.qiscus.io/js/qismo-full-v5.js`
-- API base URL: `https://qismo-stag2.qiscus.io`
-- Live Chat iframe host: `https://qismo-stag2.qiscus.io`
+- Hosted widget bundle: `https://qismo.qiscus.com/js/qismo-full-v5.js`
+- API base URL: `https://qismo.qiscus.com`
+- Live Chat iframe host: `https://omnichannel.qiscus.com`
 
 Use the resulting Worker URL as the `page_url` in the WhatsApp handoff settings:
 
@@ -36,9 +35,10 @@ https://<worker-host>/widget.html
 ```
 
 The page loads the same `qismo-full-v5.js` bundle as the FE Installation Code
-snippet. The bundle reads the invite token from the URL fragment, exchanges it
-with the configured API, then opens the returned room. No app ID needs to be
-embedded in this handoff-only page.
+snippet. It reads the invite token and optional `scriptUrl` / `baseUrl` /
+`iframeUrl` overrides from the page URL, exchanges the token with the configured
+API, then opens the returned room. Production hosts are used when no overrides
+are present. No app ID needs to be embedded in this handoff-only page.
 
 For another environment, the settings URL can override the API and iframe hosts:
 
@@ -46,9 +46,20 @@ For another environment, the settings URL can override the API and iframe hosts:
 https://<worker-host>/widget.html?baseUrl=<api-base-url>&iframeUrl=<iframe-host>
 ```
 
-When the feature is promoted to production, switch the hosted bundle URL and the
-default API/iframe hosts in `public/widget.html` to production. Never put an app
-secret or a raw invite token in query parameters.
+The bundle itself can be swapped with `scriptUrl`, e.g. the staging build:
+
+```text
+https://<worker-host>/widget.html?scriptUrl=https%3A%2F%2Fqismo-stag2.qiscus.io%2Fjs%2Fqismo-full-v5.js&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io&iframeUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
+```
+
+`scriptUrl`, `baseUrl` and `iframeUrl` only accept HTTPS URLs on `qiscus.com` /
+`qiscus.io` (and their subdomains), or `localhost` / `127.0.0.1` for local
+builds. Anything else is refused so a crafted link cannot inject arbitrary
+JavaScript or send the invite token to a foreign host. The page passes
+`baseUrl` / `iframeUrl` to `QismoFull` as options, so it works with bundles that
+do not parse those query params themselves.
+
+Never put an app secret or a raw invite token in query parameters.
 
 The selected backend must have the handoff exchange endpoint enabled and must
 allow the deployed page origin through CORS. Deploying this Worker alone does not
