@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <title>Qiscus Omnichannel Chat Widget</title>
+    <!--
+      Static port of multichannel-frontend
+      resources/views/iframes/v5/live-handover-room.blade.php (at ff2e85297).
+      Served by src/worker.ts for /iframes/v5/:app_code/live-handover-room so the
+      handoff room no longer needs Laravel. Differences from the Blade view:
+        - query params are read in the browser (URLSearchParams) instead of
+          being interpolated server-side;
+        - SDK_BASE_URL (Blade: Config app.sdk_base_url) is the constant below;
+        - title uses the default product name (no white-label config).
+      Keep in sync with the Blade view when it changes.
+    -->
+    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.6.css" />
+    <style>
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background: transparent;
+        }
+
+        body {
+            padding: 0;
+            align-items: stretch;
+            display: flex;
+        }
+
+        .qcw-container {
+            height: 100% !important;
+        }
+
+        .qcw-chat-wrapper {
+            margin-bottom: 0;
+            border-radius: 0 !important;
+            box-shadow: none;
+            height: 100%;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+        }
+
+        @media (max-width: 767px) {
+            .qcw-main {
+                -webkit-box-flex: 1;
+                -ms-flex: 1;
+                flex: 1;
+                max-height: calc(100% - 32px) !important;
+            }
+
+            .qcw-comment-form {
+                -webkit-box-flex: unset;
+                -ms-flex: unset;
+                flex: unset;
+            }
+        }
+
+        .qcw-header .qcw-window-toggle-btn,
+        .qcw-window-toggle-btn {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        /* qismo-latest-v5.css (injected at runtime) locks .qcw-main{max-height:480px}. */
+        .qcw-chat-wrapper .qcw-main {
+            max-height: none;
+            height: 100%;
+        }
+
+        .qcw-copyright {
+            justify-content: center;
+            line-height: 32px;
+            font-size: 12px;
+            color: #0A0A0A;
+            text-align: center;
+            font-style: normal;
+            display: flex;
+            position: relative;
+            order: 3;
+            background: #FFF;
+            border-top: 1px solid #ECECEC;
+            gap: 4px;
+        }
+
+        .error-app {
+            position: relative;
+            font-family: "Inter", sans-serif;
+            color: #0A0A0A;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100%;
+        }
+
+        .error-app>div {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .error-app>div>div {
+            margin-bottom: 32px;
+            font-family: 'Inter';
+            font-size: 14px;
+            max-width: 300px;
+            text-align: center;
+        }
+
+        .error-app>div>div.fail-title {
+            font-weight: 700;
+            font-size: 20px;
+            line-height: 26px;
+        }
+
+        body.is-mobile {
+            padding: 0;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        body.is-ios .qcw-comment-form textarea {
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        (function () {
+            var ua = navigator.userAgent.toLowerCase();
+            var isAndroid = ua.indexOf("android") > -1;
+            var isIos = /ipad|iphone|ipod/.test(ua) && !window.MSStream;
+            if (isAndroid) document.body.classList.add('is-android');
+            if (isIos) document.body.classList.add('is-ios');
+            if (isAndroid || isIos) document.body.classList.add('is-mobile');
+        })();
+    </script>
+    <div id="qiscus-widget"></div>
+    <script src="/js/qiscus-sdk.3.2.6.js"></script>
+    <script src="/js/third-party/aes.js"></script>
+    <script>
+        /**
+         * WA -> Live Chat handoff room. Never calls POST /api/v2/qiscus/initiate_chat:
+         * the room was already created server-side by /api/v2/live_handover/exchange.
+         * This page only JOINS it with the identity_token minted by /exchange
+         * (120 s, single use). room_id / identity_token / name / avatar arrive
+         * AES(appId)-obfuscated in the query, same as the Blade view.
+         */
+        (function () {
+            // Blade: Config::get("app.sdk_base_url") — same value on stag2 and prod.
+            var SDK_BASE_URL = 'https://api3.qiscus.com';
+
+            var sendMessage = function (msg) {
+                window.parent.postMessage(msg, '*');
+            };
+
+            function createNode(el, content, attr) {
+                var node = document.createElement(el);
+                if (content) node.appendChild(document.createTextNode(content));
+                if (attr) {
+                    Object.keys(attr).forEach(function (a) {
+                        var nodeAttr = document.createAttribute(a);
+                        nodeAttr.value = attr[a];
+                        node.setAttributeNode(nodeAttr);
+                    });
+                }
+                return node;
+            }
+
+            function showError() {
+                var div = document.createElement('div');
+                div.className = 'error-app';
+                div.innerHTML =
+                    '<div>' +
+                    '<img src="/img/fail_load_widget.svg" alt="fail_load_widget">' +
+                    '<div class="fail-title"><div>Oops...</div></div>' +
+                    '<div>Something went wrong. Please try again by refreshing your browser.</div>' +
+                    '</div>';
+                document.body.appendChild(div);
+            }
+
+            var q = new URLSearchParams(location.search);
+            var app_id = q.get('app_id') || '',
+                color_widget = q.get('color_widget') || '#27B199',
+                qiscusBaseUrl = SDK_BASE_URL;
+
+            function decrypt(value) {
+                return value ? CryptoJS.AES.decrypt(value, app_id).toString(CryptoJS.enc.Utf8) : '';
+            }
+
+            var roomId, identityToken, userName, avatarUrl;
+            try {
+                roomId = decrypt(q.get('room_id'));
+                identityToken = decrypt(q.get('identity_token'));
+                userName = decrypt(q.get('name'));
+                avatarUrl = decrypt(q.get('avatar'));
+            } catch (e) {
+                roomId = '';
+                identityToken = '';
+            }
+
+            if (!app_id || !roomId || !identityToken) {
+                showError();
+                return;
+            }
+
+            bindMessageListener();
+            attachCustomCss();
+            initJoinRoom();
+
+            function bindMessageListener() {
+                window.addEventListener('message', function (e) {
+                    if (!e.data) return;
+                    if (e.data.event_name == 'custom-css') {
+                        if (!document.querySelector('#qismo-widget-custom-css')) {
+                            document.head.appendChild(createNode('style', e.data.css, { id: 'qismo-widget-custom-css' }));
+                        } else {
+                            document.querySelector('#qismo-widget-custom-css').innerText = e.data.css;
+                        }
+                    }
+                    if (e.data.event_name == 'send-message') {
+                        var rid = QiscusSDK.core.selected.id;
+                        QiscusSDK.core.sendComment(rid, e.data.text, null, e.data.type || 'text', null, e.data.payload || null, e.data.extras || null);
+                    }
+                });
+            }
+
+            function attachCustomCss() {
+                var qismocss = createNode('link', null, { 'rel': 'stylesheet', 'href': '/css/qismo-latest-v5.css' });
+                qismocss.id = 'qismo-css';
+                !document.querySelector('#qismo-css') && document.head.appendChild(qismocss);
+            }
+
+            function initJoinRoom() {
+                QiscusSDK.core.init({
+                    AppId: app_id,
+                    baseURL: qiscusBaseUrl,
+                    sync: 'both',
+                    mode: 'wide',
+                    uploadURL: qiscusBaseUrl + '/api/v2/sdk/upload',
+                    options: {
+                        loginSuccessCallback: function (userData) {
+                            QiscusSDK.core.chatGroup(roomId).then(function () {
+                                sendMessage({ event_name: 'qiscus:session-ready', data: { room_id: roomId } });
+                            });
+                        },
+                        loginErrorCallback: function (data) {
+                            sendMessage({ event_name: 'qiscus:session-error', data: data });
+                        },
+                        roomChangedCallback: function (data) {
+                            if (!document.querySelector('.qcw-copyright')) {
+                                var html = '<div class="qcw-copyright">Powered by ' +
+                                    '<a href="https://qiscus.com" target="_blank" style="font-weight:600;color:#007BFF;">Qiscus</a></div>';
+                                var wrap = document.querySelector('.qcw-chat-wrapper');
+                                if (wrap) wrap.insertAdjacentHTML('beforeend', html);
+                            }
+                        },
+                        newMessagesCallback: function (data) {
+                            if (data[0] && data[0].type == 'system_event' &&
+                                (data[0].message || '').toLowerCase().indexOf('as resolved') > -1) {
+                                sendMessage({ event_name: 'qiscus:session-closed', data: { reason: 'resolved' } });
+                            }
+                        },
+                    },
+                });
+
+                QiscusSDK.core.verifyIdentityToken(identityToken).then(function (verifyResponse) {
+                    QiscusSDK.core.setUserWithIdentityToken(verifyResponse);
+                    QiscusSDK.render();
+                    QiscusUI.setCustomColors({ bubleRightColor: color_widget });
+                }, function () {
+                    // identity_token expired (120 s) before use; the parent page must
+                    // exchange a fresh invite token.
+                    showError();
+                });
+            }
+        })();
+    </script>
+</body>
+
+</html>

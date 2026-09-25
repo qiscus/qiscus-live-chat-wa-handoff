@@ -12,8 +12,9 @@
  * work: it loads the bundled script and passes production API/iframe
  * defaults (overridable via `?baseUrl=`, `?iframeUrl=`, `?scriptUrl=`).
  *
- * This Worker itself only serves `/` (a landing note) and static assets
- * (`/widget.html`, `/js/qismo-full-v5.js`) — no server logic, no secrets.
+ * This Worker itself only serves `/` (a landing note), the handoff room at
+ * `/iframes/v5/:app_code/live-handover-room`, and static assets
+ * (`/widget.html`, `/js/*`, `/css/*`, `/img/*`) — no server logic, no secrets.
  */
 import { Hono } from "hono"
 
@@ -43,6 +44,16 @@ app.get("/", (c) => {
   membuat link. Jangan menambahkan token secara manual.</p>
 </body>
 </html>`)
+})
+
+// Handoff room iframe (port of multichannel-frontend's
+// iframes/v5/live-handover-room.blade.php). QismoFull builds
+// `${iframeUrl}/iframes/v5/<app_code>/live-handover-room?...`; the page reads
+// its query itself, so the Worker only maps the path to the static file.
+app.get("/iframes/v5/:appCode/live-handover-room", (c) => {
+  const url = new URL(c.req.url)
+  url.pathname = "/live-handover-room.html"
+  return c.env.ASSETS.fetch(new Request(url, c.req.raw))
 })
 
 // widget.html is served

@@ -68,7 +68,8 @@
       };
 
       // Query override, restricted to Qiscus hosts over HTTPS or localhost;
-      // scriptUrl may also point at this page's own origin (self-hosted bundle).
+      // scriptUrl/iframeUrl may also point at this page's own origin (bundle and
+      // handoff room served by this Worker).
       // Returns the default when absent, null when present but not allowed.
       function fromQuery(name) {
         var raw = new URLSearchParams(location.search).get(name);
@@ -78,7 +79,7 @@
           var host = url.hostname;
           var local = host === "localhost" || host === "127.0.0.1";
           var qiscus = /(^|\.)qiscus\.(com|io)$/.test(host);
-          var self = name === "scriptUrl" && url.origin === location.origin;
+          var self = name !== "baseUrl" && url.origin === location.origin;
           if (self || (url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
             return name === "scriptUrl" ? url.href : url.origin;
           }
