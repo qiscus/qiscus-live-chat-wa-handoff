@@ -37,18 +37,20 @@
     <div id="handover-status">Menghubungkan…</div>
     <script>
       /**
-       * Mount the same hosted QismoFull bundle as the Installation Code
-       * snippet. The token stays in the URL fragment, never sent in requests.
+       * Mount the QismoFull bundle served by this same Worker
+       * (/js/qismo-full-v5.js, copied from multichannel-frontend). The token
+       * stays in the URL fragment, never sent in requests.
        *
-       * Production is the default. page_url may override the environment:
+       * Production API/iframe hosts are the default. page_url may override:
        *   https://<worker>/widget.html?scriptUrl=...&baseUrl=...&iframeUrl=...#t=<token>
-       * The wrapper passes baseUrl/iframeUrl as QismoFull options because
-       * deployed bundles do not read them from the query string themselves.
-       * All three only accept Qiscus hosts (or localhost), otherwise a crafted
-       * link could run foreign JS or send the invite token elsewhere.
+       * The wrapper also passes baseUrl/iframeUrl as QismoFull options so
+       * older bundles that do not read the query string still work.
+       * Overrides only accept Qiscus hosts, localhost, or (scriptUrl only)
+       * this page's own origin; otherwise a crafted link could run foreign JS
+       * or send the invite token elsewhere.
        */
       var DEFAULTS = {
-        scriptUrl: "https://qismo.qiscus.com/js/qismo-full-v5.js",
+        scriptUrl: new URL("/js/qismo-full-v5.js", location.href).href,
         baseUrl: "https://qismo.qiscus.com",
         iframeUrl: "https://omnichannel.qiscus.com",
       };
@@ -65,17 +67,19 @@
         unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
       };
 
-      // Query override, restricted to Qiscus hosts over HTTPS or localhost.
+      // Query override, restricted to Qiscus hosts over HTTPS or localhost;
+      // scriptUrl may also point at this page's own origin (self-hosted bundle).
       // Returns the default when absent, null when present but not allowed.
       function fromQuery(name) {
         var raw = new URLSearchParams(location.search).get(name);
         if (!raw) return DEFAULTS[name];
         try {
-          var url = new URL(raw);
+          var url = new URL(raw, location.href);
           var host = url.hostname;
           var local = host === "localhost" || host === "127.0.0.1";
           var qiscus = /(^|\.)qiscus\.(com|io)$/.test(host);
-          if ((url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
+          var self = name === "scriptUrl" && url.origin === location.origin;
+          if (self || (url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
             return name === "scriptUrl" ? url.href : url.origin;
           }
         } catch (_) {}

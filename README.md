@@ -24,7 +24,7 @@ copy a token into the page URL yourself. The fragment is not sent in HTTP reques
 
 The sample defaults to Qiscus production:
 
-- Hosted widget bundle: `https://qismo.qiscus.com/js/qismo-full-v5.js`
+- Widget bundle: `/js/qismo-full-v5.js`, served by this same Worker
 - API base URL: `https://qismo.qiscus.com`
 - Live Chat iframe host: `https://omnichannel.qiscus.com`
 
@@ -34,8 +34,13 @@ Use the resulting Worker URL as the `page_url` in the WhatsApp handoff settings:
 https://<worker-host>/widget.html
 ```
 
-The page loads the same `qismo-full-v5.js` bundle as the FE Installation Code
-snippet. It reads the invite token and optional `scriptUrl` / `baseUrl` /
+The page loads `public/js/qismo-full-v5.js`, a copy of the `qismo-full-v5.js`
+bundle built in `multichannel-frontend` (`qismo-widget`). Bundling it here keeps
+the widget working while the Qiscus-hosted copy is missing or outdated. To
+update it, rebuild in `multichannel-frontend` and copy `public/js/qismo-full-v5.js`
+(and its `.map`) into `public/js/` here, then redeploy.
+
+The page reads the invite token and optional `scriptUrl` / `baseUrl` /
 `iframeUrl` overrides from the page URL, exchanges the token with the configured
 API, then opens the returned room. Production hosts are used when no overrides
 are present. No app ID needs to be embedded in this handoff-only page.
@@ -46,15 +51,18 @@ For another environment, the settings URL can override the API and iframe hosts:
 https://<worker-host>/widget.html?baseUrl=<api-base-url>&iframeUrl=<iframe-host>
 ```
 
-The bundle itself can be swapped with `scriptUrl`, e.g. the staging build:
+For staging, override only the API and iframe hosts; the bundled script stays:
 
 ```text
-https://<worker-host>/widget.html?scriptUrl=https%3A%2F%2Fqismo-stag2.qiscus.io%2Fjs%2Fqismo-full-v5.js&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io&iframeUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
+https://<worker-host>/widget.html?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io&iframeUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
 ```
+
+`scriptUrl` can still point at another bundle (e.g. a Qiscus-hosted build).
 
 `scriptUrl`, `baseUrl` and `iframeUrl` only accept HTTPS URLs on `qiscus.com` /
 `qiscus.io` (and their subdomains), or `localhost` / `127.0.0.1` for local
-builds. Anything else is refused so a crafted link cannot inject arbitrary
+builds; `scriptUrl` also accepts this page's own origin. Anything else is
+refused so a crafted link cannot inject arbitrary
 JavaScript or send the invite token to a foreign host. The page passes
 `baseUrl` / `iframeUrl` to `QismoFull` as options, so it works with bundles that
 do not parse those query params themselves.

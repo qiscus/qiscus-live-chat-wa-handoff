@@ -4,16 +4,16 @@
  *
  * This is the "halaman client" from the spec's §8 table — the page a
  * WhatsApp invite link's redirector (`GET /c/:token` -> 302) points at. It
- * loads the same hosted `qismo-full-v5.js` (`QismoFull`) bundle as the
- * Installation Code snippet. The bundle owns token exchange and room mounting.
+ * loads the `qismo-full-v5.js` (`QismoFull`) bundle, a copy of the
+ * multichannel-frontend build served from this Worker at
+ * `/js/qismo-full-v5.js`. The bundle owns token exchange and room mounting.
  *
  * `widget.html` (static asset, served at `/widget.html`) does the actual
- * work: the page loads the Qiscus-hosted bundle from staging2, and passes
- * staging2 API/iframe defaults (overridable via `?baseUrl=` and `?iframeUrl=`).
- * Switch these hosts to production after the feature is promoted.
+ * work: it loads the bundled script and passes production API/iframe
+ * defaults (overridable via `?baseUrl=`, `?iframeUrl=`, `?scriptUrl=`).
  *
  * This Worker itself only serves `/` (a landing note) and static assets
- * (`/widget.html`) — no server logic, no secrets.
+ * (`/widget.html`, `/js/qismo-full-v5.js`) — no server logic, no secrets.
  */
 import { Hono } from "hono"
 
