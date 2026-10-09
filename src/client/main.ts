@@ -144,6 +144,8 @@ const TEXT = {
   iosInstall:
     "Di iPhone/iPad, notifikasi hanya tersedia setelah halaman ini ditambahkan ke Layar Utama (iOS 16.4+): ketuk tombol Bagikan, lalu “Tambah ke Layar Utama”. Aplikasi di Layar Utama tidak berbagi sesi dengan Safari, jadi setelah membukanya, tempel lagi link undangan dari WhatsApp di sana.",
   error: "Notifikasi belum bisa diaktifkan. Coba lagi nanti.",
+  errorBrowser:
+    "Notifikasi belum bisa diaktifkan di browser ini. Coba buka link undangan di Google Chrome, Microsoft Edge, Firefox, atau Safari, lalu aktifkan notifikasi di sana.",
   retry: "Coba lagi",
   pasteIntro: "Tempel link undangan dari WhatsApp untuk melanjutkan percakapan di aplikasi ini.",
   pastePlaceholder: "https://…",
@@ -217,7 +219,9 @@ function createUi(actions: { enable(): void; disable(): void }) {
         return show(TEXT.iosInstall, [button(TEXT.close, dismiss)])
       case "error":
         return show(
-          TEXT.error,
+          // "fcm" = the browser could not reach its push service (e.g. a
+          // de-Googled Chromium such as Helium): retrying here will not help.
+          state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error,
           [button(TEXT.close, () => (root.hidden = true)), button(TEXT.retry, actions.enable, true)],
           // Shown on the page: after a reopen the console trail is gone.
           `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
