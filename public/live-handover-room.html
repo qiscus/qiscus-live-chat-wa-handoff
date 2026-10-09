@@ -149,6 +149,7 @@
     <div id="qiscus-widget"></div>
     <script src="/js/qiscus-sdk.3.2.6.js"></script>
     <script src="/js/third-party/aes.js"></script>
+    <script src="/js/push/handoff-room.js"></script>
     <script>
         /**
          * WA -> Live Chat handoff room. Never calls POST /api/v2/qiscus/initiate_chat:
@@ -156,13 +157,22 @@
          * This page only JOINS it with the identity_token minted by /exchange
          * (120 s, single use). room_id / identity_token / name / avatar arrive
          * AES(appId)-obfuscated in the query, same as the Blade view.
+         *
+         * Resume (?resume=1, no token in the URL): only when the parent frame is
+         * this same origin (our /widget.html). The SDK login stored after an
+         * earlier identity-token login is reused; the consumed identity_token is
+         * never stored or replayed. Embedded anywhere else, nothing is stored or
+         * read and the page behaves as before.
          */
         (function () {
             // Blade: Config::get("app.sdk_base_url") — same value on stag2 and prod.
             var SDK_BASE_URL = 'https://api3.qiscus.com';
+            var room = window.HandoffRoom || null;
+            var trusted = !!(room && room.trustedParent());
 
             var sendMessage = function (msg) {
-                window.parent.postMessage(msg, '*');
+                // Same-origin parent: deliver to that origin only.
+                window.parent.postMessage(msg, trusted ? location.origin : '*');
             };
 
             function createNode(el, content, attr) {
@@ -193,24 +203,37 @@
             var q = new URLSearchParams(location.search);
             var app_id = q.get('app_id') || '',
                 color_widget = q.get('color_widget') || '#27B199',
-                qiscusBaseUrl = SDK_BASE_URL;
+                qiscusBaseUrl = SDK_BASE_URL,
+                resumeMode = q.get('resume') === '1',
+                resumed = null;
 
             function decrypt(value) {
                 return value ? CryptoJS.AES.decrypt(value, app_id).toString(CryptoJS.enc.Utf8) : '';
             }
 
             var roomId, identityToken, userName, avatarUrl;
-            try {
-                roomId = decrypt(q.get('room_id'));
-                identityToken = decrypt(q.get('identity_token'));
-                userName = decrypt(q.get('name'));
-                avatarUrl = decrypt(q.get('avatar'));
-            } catch (e) {
-                roomId = '';
+            if (resumeMode) {
+                resumed = trusted && app_id ? room.resumeSession(app_id) : null;
+                if (!resumed) {
+                    sendMessage({ event_name: 'qiscus:session-error', data: { reason: 'no_session' } });
+                    showError();
+                    return;
+                }
+                roomId = resumed.roomId;
                 identityToken = '';
+            } else {
+                try {
+                    roomId = decrypt(q.get('room_id'));
+                    identityToken = decrypt(q.get('identity_token'));
+                    userName = decrypt(q.get('name'));
+                    avatarUrl = decrypt(q.get('avatar'));
+                } catch (e) {
+                    roomId = '';
+                    identityToken = '';
+                }
             }
 
-            if (!app_id || !roomId || !identityToken) {
+            if (!app_id || !roomId || (!identityToken && !resumed)) {
                 showError();
                 return;
             }
@@ -221,6 +244,8 @@
 
             function bindMessageListener() {
                 window.addEventListener('message', function (e) {
+                    // Only the frame that embeds this room may drive it.
+                    if (e.source !== window.parent) return;
                     if (!e.data) return;
                     if (e.data.event_name == 'custom-css') {
                         if (!document.querySelector('#qismo-widget-custom-css')) {
@@ -252,7 +277,17 @@
                     options: {
                         loginSuccessCallback: function (userData) {
                             QiscusSDK.core.chatGroup(roomId).then(function () {
+                                // Identity verified upstream (verify_identity_token)
+                                // and the room loaded with that login: only now is
+                                // the login worth keeping for resume.
+                                if (!resumeMode && room) room.persistLogin(app_id, roomId, userData);
                                 sendMessage({ event_name: 'qiscus:session-ready', data: { room_id: roomId } });
+                            }, function () {
+                                if (resumeMode) {
+                                    // Stored login no longer accepted for this room.
+                                    sendMessage({ event_name: 'qiscus:session-error', data: { reason: 'room' } });
+                                    showError();
+                                }
                             });
                         },
                         loginErrorCallback: function (data) {
@@ -274,6 +309,15 @@
                         },
                     },
                 });
+
+                if (resumed) {
+                    // Resume: the SDK login itself (user + SDK token), no network
+                    // verification of a consumed identity_token.
+                    QiscusSDK.core.setUserWithIdentityToken({ user: resumed.user });
+                    QiscusSDK.render();
+                    QiscusUI.setCustomColors({ bubleRightColor: color_widget });
+                    return;
+                }
 
                 QiscusSDK.core.verifyIdentityToken(identityToken).then(function (verifyResponse) {
                     QiscusSDK.core.setUserWithIdentityToken(verifyResponse);

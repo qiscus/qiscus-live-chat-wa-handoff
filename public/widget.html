@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <title>Live Chat</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#27b199" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/img/pwa/icon-192.png" />
+    <link rel="apple-touch-icon" href="/img/pwa/apple-touch-icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Live Chat" />
+    <script src="/js/push/handoff-push.js"></script>
     <style>
       html,
       body {
@@ -64,6 +72,8 @@
         too_many_requests: "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
         network_error: "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
         invalid_script: "Konfigurasi widget tidak valid.",
+        session_expired: "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
+        no_session: "Belum ada percakapan aktif di aplikasi ini.",
         unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
       };
 
@@ -95,6 +105,11 @@
       var isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
       var initialHash = location.hash;
 
+      // Push + resume (public/js/push/handoff-push.js). Optional: if the bundle
+      // failed to load, the page behaves exactly as before.
+      var push = null;
+      var hasInvite = /(^|&)t=/.test(location.hash.slice(1));
+
       function mount(env) {
         new QismoFull({
           target: document.body,
@@ -104,8 +119,10 @@
             onEvent: function (event) {
               if (event.event_name === "qiscus:handoff-ready") {
                 statusEl.style.display = "none";
+                if (push) push.handoffReady();
               } else if (event.event_name === "qiscus:handoff-error") {
                 statusEl.textContent = PESAN[event.code] || PESAN.unknown;
+                if (push && hasInvite) push.inviteFailed();
               }
             },
           },
@@ -115,14 +132,7 @@
         }
       }
 
-      var env = {
-        scriptUrl: fromQuery("scriptUrl"),
-        baseUrl: fromQuery("baseUrl"),
-        iframeUrl: fromQuery("iframeUrl"),
-      };
-      if (!env.scriptUrl || !env.baseUrl || !env.iframeUrl) {
-        statusEl.textContent = PESAN.invalid_script;
-      } else {
+      function startWidget(env) {
         var script = document.createElement("script");
         script.src = env.scriptUrl;
         script.onload = function () {
@@ -136,6 +146,51 @@
           statusEl.textContent = PESAN.network_error;
         };
         document.head.appendChild(script);
+      }
+
+      var env = {
+        scriptUrl: fromQuery("scriptUrl"),
+        baseUrl: fromQuery("baseUrl"),
+        iframeUrl: fromQuery("iframeUrl"),
+      };
+      if (!env.scriptUrl || !env.baseUrl || !env.iframeUrl) {
+        statusEl.textContent = PESAN.invalid_script;
+      } else {
+        try {
+          push = window.HandoffPush ? window.HandoffPush.start({ iframeUrl: env.iframeUrl }) : null;
+        } catch (_) {
+          push = null;
+        }
+        if (hasInvite || !push) {
+          // A new invite replaces whoever was signed in on this device.
+          if (push) push.beginInvite();
+          startWidget(env);
+        } else {
+          // No invite: resume the stored session (refresh, notification click,
+          // Home Screen launch). Never re-uses a consumed token.
+          push.resume().then(
+            function (session) {
+              if (session) {
+                push.mountResumeRoom(session, {
+                  onReady: function () {
+                    statusEl.style.display = "none";
+                  },
+                  onFailed: function () {
+                    statusEl.style.display = "";
+                    statusEl.textContent = PESAN.session_expired;
+                  },
+                });
+              } else if (push.offerPasteLink()) {
+                statusEl.textContent = PESAN.no_session;
+              } else {
+                startWidget(env);
+              }
+            },
+            function () {
+              startWidget(env);
+            },
+          );
+        }
       }
 
       window.addEventListener("message", function (e) {
