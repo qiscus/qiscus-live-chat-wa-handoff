@@ -1,0 +1,17 @@
+{
+  "id": "/widget.html",
+  "name": "Live Chat",
+  "short_name": "Live Chat",
+  "description": "Lanjutkan percakapan dengan agen.",
+  "lang": "id",
+  "start_url": "/widget.html?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#27b199",
+  "icons": [
+    { "src": "/img/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/img/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/img/pwa/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
