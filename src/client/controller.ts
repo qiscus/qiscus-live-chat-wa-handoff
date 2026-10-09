@@ -1,0 +1,323 @@
+/**
+ * Push opt-in for the hosted handoff page, on the existing Qiscus FCM path.
+ *
+ *   explicit click -> Notification permission -> FCM web token (firebase/messaging,
+ *   public web config + VAPID from /push/config) -> set_user_device_token
+ *   (device_platform "web") as the handoff CUSTOMER -> SW context for filtering.
+ *
+ * Delivery is done by Qiscus's existing sender (qiscus-sdk-api sendPN ->
+ * Flash /v1/pn/room). This page sends nothing and holds no sender credential.
+ *
+ * Identity rules:
+ *  - a registration belongs to exactly one (app, SDK user); any other identity
+ *    showing up on this device (new invite, different customer) removes it with
+ *    the OWNER's credentials before the new one registers;
+ *  - session end (conversation resolved, expiry, upstream rejection) and
+ *    revoked permission remove it as well;
+ *  - nothing is registered without the user's explicit click on this device.
+ */
+import type { PushConfig } from "../push/config"
+import { removeDeviceToken, setDeviceToken } from "./sdkDeviceToken"
+import {
+  type KeyValueStorage,
+  type StoredSession,
+  clearSession,
+  loadSession,
+  sameIdentity,
+  stashSessionForInvite,
+  takePreviousSession,
+} from "./session"
+import type { SupportState } from "./support"
+
+export const REG_KEY = "qiscus-handoff:push-registration:v1"
+export const OPT_IN_KEY = "qiscus-handoff:push-opt-in:v1"
+
+export type ConfiguredPushConfig = Extract<PushConfig, { status: "configured" }>
+
+export type PushUiState =
+  | { kind: "hidden" }
+  | { kind: "unconfigured"; missing: string[]; invalid: string[] }
+  | { kind: "unsupported" }
+  | { kind: "ios-install" }
+  | { kind: "cross-origin-room" }
+  | { kind: "app-not-enabled" }
+  | { kind: "offer" }
+  | { kind: "busy" }
+  | { kind: "enabled" }
+  | { kind: "denied" }
+  | { kind: "error"; reason: string }
+
+export interface SwContext {
+  appId: string
+  roomId: string
+  selfEmail: string
+}
+
+export interface PushDeps {
+  storage: KeyValueStorage
+  fetch: typeof fetch
+  now(): number
+  support(): SupportState
+  permission(): NotificationPermission
+  requestPermission(): Promise<NotificationPermission>
+  loadConfig(): Promise<PushConfig>
+  fcm: {
+    getToken(cfg: ConfiguredPushConfig): Promise<string>
+    deleteToken(cfg: ConfiguredPushConfig): Promise<void>
+  }
+  swContext: { write(ctx: SwContext | null): Promise<void> }
+  onState(state: PushUiState): void
+}
+
+interface Registration {
+  v: 1
+  fcmToken: string
+  appId: string
+  userEmail: string
+  roomId: string
+  at: number
+}
+
+type Creds = Pick<StoredSession, "appId" | "user">
+
+export class PushController {
+  private cfg: PushConfig | null = null
+
+  constructor(private deps: PushDeps) {}
+
+  // ---------------------------------------------------------------- lifecycle
+
+  /** A new invite (#t=) arrived: the current identity can no longer resume. */
+  beginInvite(): void {
+    stashSessionForInvite(this.deps.storage)
+    this.emit({ kind: "hidden" })
+  }
+
+  /** The invite could not be exchanged: the old identity is still gone. */
+  async inviteFailed(): Promise<void> {
+    await this.teardownPrevious()
+    this.emit({ kind: "hidden" })
+  }
+
+  /** The room iframe is not on this origin, so its credentials are unreachable. */
+  async crossOriginRoom(): Promise<void> {
+    await this.teardownPrevious()
+    this.emit({ kind: "cross-origin-room" })
+  }
+
+  /** The same-origin room logged in and stored the session. */
+  async sessionReady(): Promise<void> {
+    const loaded = loadSession(this.deps.storage, this.deps.now())
+    const prev = takePreviousSession(this.deps.storage)
+    const session = loaded.state === "valid" ? loaded.session : null
+    if (prev && !sameIdentity(prev, session)) await this.teardown(prev)
+    if (!session) {
+      if (loaded.state === "expired") await this.teardown(loaded.session)
+      this.emit({ kind: "hidden" })
+      return
+    }
+    // A registration owned by someone we hold no credentials for: drop it locally.
+    const reg = this.loadReg()
+    if (reg && !this.ownedBy(reg, session)) await this.teardown(null)
+    await this.refresh(session)
+  }
+
+  /** Conversation resolved: stop pushes and forget the session. */
+  async sessionClosed(): Promise<void> {
+    const loaded = loadSession(this.deps.storage, this.deps.now())
+    await this.teardown(loaded.state === "none" ? null : loaded.session)
+    clearSession(this.deps.storage)
+    this.emit({ kind: "hidden" })
+  }
+
+  /** The stored SDK login was rejected upstream on resume. */
+  async sessionInvalid(): Promise<void> {
+    await this.sessionClosed()
+  }
+
+  /**
+   * Called on a page load WITHOUT an invite. Returns the session to resume, or
+   * null. Never touches the network for a valid session.
+   */
+  async resume(): Promise<StoredSession | null> {
+    await this.teardownPrevious()
+    const loaded = loadSession(this.deps.storage, this.deps.now())
+    if (loaded.state === "valid") return loaded.session
+    if (loaded.state === "expired") await this.teardown(loaded.session)
+    else if (this.loadReg()) await this.teardown(null)
+    return null
+  }
+
+  // -------------------------------------------------------------- user actions
+
+  /** Explicit opt-in. Must run from a user gesture (permission prompt). */
+  async enable(): Promise<void> {
+    const ctx = await this.context()
+    if (!ctx) return
+    const { session, cfg } = ctx
+    this.emit({ kind: "busy" })
+    let perm = this.deps.permission()
+    if (perm !== "granted") {
+      try {
+        perm = await this.deps.requestPermission()
+      } catch {
+        perm = this.deps.permission()
+      }
+    }
+    if (perm === "denied") {
+      this.deps.storage.removeItem(OPT_IN_KEY)
+      this.emit({ kind: "denied" })
+      return
+    }
+    if (perm !== "granted") {
+      this.emit({ kind: "offer" })
+      return
+    }
+    this.deps.storage.setItem(OPT_IN_KEY, "1")
+    this.emit(await this.ensureRegistered(session, cfg))
+  }
+
+  async disable(): Promise<void> {
+    const loaded = loadSession(this.deps.storage, this.deps.now())
+    this.deps.storage.removeItem(OPT_IN_KEY)
+    await this.teardown(loaded.state === "none" ? null : loaded.session)
+    this.emit(loaded.state === "valid" ? { kind: "offer" } : { kind: "hidden" })
+  }
+
+  // ------------------------------------------------------------------ internals
+
+  private async refresh(session: StoredSession): Promise<void> {
+    const ctx = await this.context(session)
+    if (!ctx) return
+    const perm = this.deps.permission()
+    const reg = this.loadReg()
+    if (perm === "denied") {
+      this.deps.storage.removeItem(OPT_IN_KEY)
+      if (reg) await this.teardown(session)
+      this.emit({ kind: "denied" })
+      return
+    }
+    if (perm !== "granted") {
+      if (reg) await this.teardown(session)
+      this.emit({ kind: "offer" })
+      return
+    }
+    if (this.deps.storage.getItem(OPT_IN_KEY) !== "1") {
+      if (reg) await this.teardown(session)
+      this.emit({ kind: "offer" })
+      return
+    }
+    this.emit(await this.ensureRegistered(session, ctx.cfg))
+  }
+
+  /** Session + config + support + app allowlist, emitting the blocking state if any. */
+  private async context(given?: StoredSession): Promise<{ session: StoredSession; cfg: ConfiguredPushConfig } | null> {
+    let session = given ?? null
+    if (!session) {
+      const loaded = loadSession(this.deps.storage, this.deps.now())
+      session = loaded.state === "valid" ? loaded.session : null
+    }
+    if (!session) {
+      this.emit({ kind: "hidden" })
+      return null
+    }
+    const cfg = await this.config()
+    if (cfg.status !== "configured") {
+      this.emit({ kind: "unconfigured", missing: cfg.missing, invalid: cfg.invalid })
+      return null
+    }
+    if (cfg.appCodes && !cfg.appCodes.includes(session.appId)) {
+      if (this.loadReg()) await this.teardown(session)
+      this.emit({ kind: "app-not-enabled" })
+      return null
+    }
+    const support = this.deps.support()
+    if (support !== "supported") {
+      this.emit({ kind: support })
+      return null
+    }
+    return { session, cfg }
+  }
+
+  private async ensureRegistered(session: StoredSession, cfg: ConfiguredPushConfig): Promise<PushUiState> {
+    let token: string
+    try {
+      token = await this.deps.fcm.getToken(cfg)
+    } catch {
+      return { kind: "error", reason: "fcm" }
+    }
+    const reg = this.loadReg()
+    const sameToken = !!reg && reg.fcmToken === token && this.ownedBy(reg, session)
+    if (!sameToken) {
+      const r = await setDeviceToken(this.deps.fetch, session, token)
+      if (!r.ok) return { kind: "error", reason: r.error || "register" }
+      // Rotated token: the old one must not keep receiving.
+      if (reg && reg.fcmToken !== token && this.ownedBy(reg, session)) {
+        await removeDeviceToken(this.deps.fetch, session, reg.fcmToken)
+      }
+    }
+    this.saveReg({ v: 1, fcmToken: token, appId: session.appId, userEmail: session.user.email, roomId: session.roomId, at: this.deps.now() })
+    await this.safe(() => this.deps.swContext.write({ appId: session.appId, roomId: session.roomId, selfEmail: session.user.email }))
+    return { kind: "enabled" }
+  }
+
+  private async teardownPrevious(): Promise<void> {
+    const prev = takePreviousSession(this.deps.storage)
+    if (prev) await this.teardown(prev)
+  }
+
+  /**
+   * Remove this device's registration. Upstream removal only happens with the
+   * owner's own credentials; without them the FCM token is still deleted, which
+   * stops delivery at the push service.
+   */
+  private async teardown(owner: Creds | null): Promise<void> {
+    const reg = this.loadReg()
+    if (!reg) return
+    if (owner && this.ownedBy(reg, owner)) {
+      await removeDeviceToken(this.deps.fetch, owner, reg.fcmToken)
+    }
+    const cfg = await this.config()
+    if (cfg.status === "configured") await this.safe(() => this.deps.fcm.deleteToken(cfg))
+    this.deps.storage.removeItem(REG_KEY)
+    await this.safe(() => this.deps.swContext.write(null))
+  }
+
+  private ownedBy(reg: Registration, who: Creds): boolean {
+    return reg.appId === who.appId && reg.userEmail === who.user.email
+  }
+
+  private async config(): Promise<PushConfig> {
+    if (!this.cfg) {
+      try {
+        this.cfg = await this.deps.loadConfig()
+      } catch {
+        return { status: "unconfigured", missing: [], invalid: [] }
+      }
+    }
+    return this.cfg
+  }
+
+  private loadReg(): Registration | null {
+    try {
+      const r = JSON.parse(this.deps.storage.getItem(REG_KEY) || "null") as Registration | null
+      if (r && r.v === 1 && typeof r.fcmToken === "string" && typeof r.appId === "string" && typeof r.userEmail === "string") return r
+    } catch {}
+    if (this.deps.storage.getItem(REG_KEY) !== null) this.deps.storage.removeItem(REG_KEY)
+    return null
+  }
+
+  private saveReg(r: Registration): void {
+    this.deps.storage.setItem(REG_KEY, JSON.stringify(r))
+  }
+
+  private async safe(fn: () => Promise<unknown>): Promise<void> {
+    try {
+      await fn()
+    } catch {}
+  }
+
+  private emit(state: PushUiState): void {
+    this.deps.onState(state)
+  }
+}
