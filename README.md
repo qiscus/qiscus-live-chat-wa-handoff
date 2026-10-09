@@ -125,11 +125,29 @@ or in the Worker.
 | `FIREBASE_VAPID_KEY`           | Project settings → Cloud Messaging → Web Push certificates (public key) |
 | `FIREBASE_AUTH_DOMAIN`         | optional                                                              |
 | `PUSH_APP_CODES`               | optional, comma-separated Qiscus app codes allowed to enable push     |
+| `PUSH_ROOM_ORIGINS`            | optional, TEMPORARY: comma-separated origins of a cross-origin room iframe for which push is still allowed (see Limitations) |
 
 If any required value is missing or malformed, push stays off. `GET
 /push/config` returns `{"status":"unconfigured","missing":[…],"invalid":[…]}`
 (names only), and the page logs the same to the console. No new Cloudflare
 resource or storage binding is needed.
+
+**Console trail.** Every reason push stays off (`unconfigured`,
+`cross-origin-room`, `app-not-enabled`, `unsupported`) is logged with
+`console.info("[handoff-push] …")`. Each step (start, exchange seen, state
+changes, permission, FCM token, `set_user_device_token` status, service worker
+registration/updates) is logged with `console.debug`, so enable the **Verbose**
+level in DevTools. No token, e-mail or message text is ever logged.
+
+### Service worker updates
+
+The page registers `/sw.js` with `updateViaCache: "none"` and calls
+`registration.update()` when it becomes visible again (at most every 30
+minutes); the browser also re-checks on every navigation. A changed `sw.js`
+installs with `skipWaiting()` and takes over with `clients.claim()`, without
+waiting for tabs to close. The shell (offline page, manifest, icons) is
+network-first and only falls back to the cache offline, so a deploy is never
+pinned by an old cache. Bump `SHELL_CACHE` only to force old shell copies out.
 
 ### Session resume
 
@@ -159,12 +177,18 @@ is put in a URL, the manifest or a cache.
 
 ### Limitations
 
-- **Only with the room on this origin.** Push and resume need the room iframe
-  served by this Worker (`/iframes/v5/:app/live-handover-room`). With the default
-  `iframeUrl` (`https://omnichannel.qiscus.com`) the room is cross-origin, its
-  login is unreachable, and the page reports `cross-origin-room` and offers
-  nothing. To enable it, use
-  `page_url = https://<worker-host>/widget.html?iframeUrl=https%3A%2F%2F<worker-host>`.
+- **Cross-origin room (TEMPORARY allowance).** With the default `iframeUrl`
+  (`https://omnichannel.qiscus.com`) the room's own login is unreachable. When
+  that origin is listed in `PUSH_ROOM_ORIGINS`, the page reads QismoFull's own
+  exchange response once (in memory), calls `verify_identity_token` itself, and
+  stores the session as the same-origin room would. The nonce is not consumed
+  and an existing user's SDK token is not rotated, so the room's login is
+  unaffected. Resume after a refresh or notification click mounts the
+  same-origin room. The room cannot report "resolved" across origins, so the
+  session then ends only by TTL or a new invite. Without the allowance the page
+  reports `cross-origin-room`. Intended source of the list: the WA handoff
+  **Allowed domains** setting (`frame_ancestors`), which qismo-api exposes only
+  to authenticated callers today.
 - **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+). A
   Safari tab shows Add-to-Home-Screen guidance. The Home Screen app does not
   share storage with Safari, so it offers a "paste the WhatsApp invite link"

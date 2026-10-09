@@ -39,10 +39,10 @@ async function syntheticVapid(): Promise<string> {
 }
 
 const env: Record<string, unknown> = {}
-async function configurePush(on: boolean) {
+async function configurePush(on: boolean, extra: Record<string, string> = {}) {
   for (const k of Object.keys(env)) if (k !== "ASSETS") delete env[k]
   if (on)
-    Object.assign(env, {
+    Object.assign(env, extra, {
       FIREBASE_API_KEY: "AIza" + "S".repeat(35),
       FIREBASE_PROJECT_ID: "synthetic-project",
       FIREBASE_MESSAGING_SENDER_ID: "123456789012",
@@ -473,6 +473,40 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       await waitPushState(page, "cross-origin-room")
       expect(await stored(page, SESSION_KEY)).toBeNull()
       await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "cross-origin room in PUSH_ROOM_ORIGINS: the page verifies the exchange itself, offers, registers",
+    async () => {
+      await configurePush(true, { PUSH_ROOM_ORIGINS: "https://omnichannel.qiscus.com" })
+      try {
+        upstream.reset()
+        const ctx = await newContext({ grant: true })
+        const page = await ctx.newPage()
+        const logs: string[] = []
+        page.on("console", (m) => logs.push(m.text()))
+        await page.goto(invite("synthetic-invite-A", false))
+        await waitPushState(page, "offer")
+        expect(upstream.verifyCalls).toBe(1)
+        const session = JSON.parse((await stored(page, SESSION_KEY))!)
+        expect(session).toMatchObject({ appId: "synthapp", roomId: "500", user: { email: "customer-a@example.invalid" } })
+        const storageDump = await page.evaluate(() => JSON.stringify({ ...localStorage }))
+        expect(storageDump).not.toContain("synthetic-idt-")
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(upstream.deviceCalls).toHaveLength(1)
+        expect(upstream.deviceCalls[0]).toMatchObject({ path: "set_user_device_token", user: "customer-a@example.invalid", body: { device_platform: "web" } })
+        const trail = logs.join("\n")
+        expect(trail).toContain("[handoff-push] exchange seen")
+        expect(trail).not.toContain("synthetic-idt-")
+        expect(trail).not.toContain("synthetic-sdk-A")
+        expect(trail).not.toContain("customer-a@example.invalid")
+        await ctx.close()
+      } finally {
+        await configurePush(true)
+      }
     },
     60_000,
   )

@@ -18,6 +18,7 @@ const CONFIG: PushConfig = {
   },
   vapidKey: "synthetic-vapid",
   appCodes: null,
+  roomOrigins: [],
 }
 
 const tok = (n: number) => `synthetic-fcm-${n}:` + "A".repeat(120)
@@ -39,13 +40,19 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
     now: () => now,
     fetch: (async (url: string, init: RequestInit) => {
       const h = new Headers(init.headers)
+      const path = new URL(url).pathname.split("/").pop()!
+      const body = JSON.parse(String(init.body))
       sdkCalls.push({
-        path: new URL(url).pathname.split("/").pop()!,
+        path,
         app: h.get("QISCUS-SDK-APP-ID")!,
         user: h.get("QISCUS-SDK-USER-ID")!,
         sdkToken: h.get("QISCUS-SDK-TOKEN")!,
-        device: JSON.parse(String(init.body)).device_token,
+        device: body.device_token ?? body.identity_token,
       })
+      if (path === "verify_identity_token") {
+        if (status !== 200) return new Response("{}", { status })
+        return Response.json({ status: 200, results: { user: { ...u("cross@example.invalid"), identity_token: "must-not-be-stored" } } })
+      }
       return new Response("{}", { status })
     }) as unknown as typeof fetch,
     support: () => over.support ?? "supported",
@@ -273,6 +280,48 @@ describe("PushController (synthetic)", () => {
     await h.ctl.crossOriginRoom()
     expect(h.last()).toEqual({ kind: "cross-origin-room" })
     expect(h.storage.getItem(REG_KEY)).toBeNull()
+  })
+
+  const ROOM = "https://omnichannel.example.invalid"
+  const seen = { appId: "app1", roomId: "77", identityToken: "synthetic-identity-token" }
+
+  test("cross-origin room NOT in roomOrigins: reported, no SDK call, nothing stored", async () => {
+    const h = harness({ config: { ...CONFIG, roomOrigins: ["https://other.example.invalid"] } as PushConfig })
+    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
+    expect(h.last()).toEqual({ kind: "cross-origin-room" })
+    expect(h.sdkCalls).toEqual([])
+    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
+  })
+
+  test("allowed cross-origin room without a seen exchange: reported, nothing stored", async () => {
+    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
+    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: null })
+    expect(h.last()).toEqual({ kind: "cross-origin-room" })
+    expect(h.sdkCalls).toEqual([])
+  })
+
+  test("allowed cross-origin room: identity token verified as the app, session stored, offer shown, then registered", async () => {
+    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
+    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
+    expect(h.sdkCalls.map((c) => [c.path, c.app, c.user])).toEqual([["verify_identity_token", "app1", null as unknown as string]])
+    const loaded = loadSession(h.storage, h.nowFn())
+    expect(loaded.state).toBe("valid")
+    if (loaded.state !== "valid") throw new Error("unreachable")
+    expect([loaded.session.appId, loaded.session.roomId, loaded.session.user.email]).toEqual(["app1", "77", "cross@example.invalid"])
+    expect(JSON.stringify(loaded.session)).not.toContain("must-not-be-stored")
+    expect(JSON.stringify(loaded.session)).not.toContain("synthetic-identity-token")
+    expect(h.last()).toEqual({ kind: "offer" })
+    await h.ctl.enable()
+    expect(h.last()).toEqual({ kind: "enabled" })
+    expect(h.sdkCalls.at(-1)!.path).toBe("set_user_device_token")
+    expect(h.sdkCalls.at(-1)!.user).toBe("cross@example.invalid")
+  })
+
+  test("allowed cross-origin room, verify rejected upstream: reported, nothing stored", async () => {
+    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig, status: 401 })
+    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
+    expect(h.last()).toEqual({ kind: "cross-origin-room" })
+    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
   })
 
   test("permission revoked in browser settings: registration removed on next load", async () => {

@@ -15,9 +15,9 @@
  * read from same-origin storage the room wrote.
  */
 import type { PushConfig } from "../push/config"
-import { type ConfiguredPushConfig, PushController, type PushDeps, type PushUiState } from "./controller"
+import { type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
 import { parseInviteLink } from "./inviteLink"
-import { APP_CODE_RE, type StoredSession, loadSession } from "./session"
+import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
 import { detectSupport, probeBrowser } from "./support"
 import { writeSwContext } from "./swContext"
 
@@ -287,6 +287,70 @@ function isStandalone(): boolean {
   return nav.standalone === true || !!window.matchMedia?.("(display-mode: standalone)").matches
 }
 
+// ------------------------------------------------------ exchange observation
+
+const EXCHANGE_PATH = "/api/v2/live_handover/exchange"
+const QISCUS_HOST = /(^|\.)qiscus\.(com|io)$/
+
+/** A POST to the Qiscus handoff exchange endpoint (QismoFull's own request). */
+export function isExchangeRequest(method: string, url: string, base: string): boolean {
+  if (String(method).toUpperCase() !== "POST") return false
+  try {
+    const u = new URL(url, base)
+    return u.protocol === "https:" && QISCUS_HOST.test(u.hostname) && u.pathname === EXCHANGE_PATH
+  } catch {
+    return false
+  }
+}
+
+/** The fields push needs from an exchange response body, or null. */
+export function parseExchange(raw: string): ExchangeCapture | null {
+  try {
+    const j = JSON.parse(raw) as Record<string, unknown> & { data?: Record<string, unknown> }
+    const d = (j && typeof j.data === "object" && j.data) || j
+    const appId = d.app_code
+    const roomId = d.room_id == null ? "" : String(d.room_id)
+    const identityToken = d.identity_token
+    if (typeof appId !== "string" || !APP_CODE_RE.test(appId)) return null
+    if (!ROOM_ID_RE.test(roomId)) return null
+    if (typeof identityToken !== "string" || !identityToken || identityToken.length > 8192) return null
+    return { appId, roomId, identityToken }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * QismoFull exchanges the invite with XMLHttpRequest and hands the identity
+ * token only to the room iframe. With a cross-origin room that is the only
+ * moment the page can learn it, so the page reads that one response. Kept in
+ * memory, used once, never stored or logged.
+ */
+function observeExchange(onCapture: (c: ExchangeCapture) => void): void {
+  if (typeof XMLHttpRequest === "undefined") return
+  const proto = XMLHttpRequest.prototype as XMLHttpRequest & { __handoffObserved?: boolean }
+  if (proto.__handoffObserved) return
+  proto.__handoffObserved = true
+  const open = proto.open
+  const send = proto.send
+  const marked = new WeakSet<XMLHttpRequest>()
+  proto.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
+    if (isExchangeRequest(method, String(url), location.href)) marked.add(this)
+    return (open as (...a: unknown[]) => void).apply(this, [method, url, ...rest])
+  } as typeof proto.open
+  proto.send = function (this: XMLHttpRequest, ...args: unknown[]) {
+    if (marked.has(this)) {
+      this.addEventListener("load", () => {
+        if (this.status < 200 || this.status >= 300) return debug("exchange answered", this.status)
+        const c = parseExchange(typeof this.responseText === "string" ? this.responseText : "")
+        debug("exchange seen", c ? { appId: c.appId, roomId: c.roomId } : "unparsed")
+        if (c) onCapture(c)
+      })
+    }
+    return (send as (...a: unknown[]) => void).apply(this, args)
+  } as typeof proto.send
+}
+
 export function start(opts: { iframeUrl: string }): HandoffPushApi {
   let resuming = false
   let resumeHandlers: { onReady(): void; onFailed(): void } | null = null
@@ -318,11 +382,28 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     debug("service worker unavailable", { secure: window.isSecureContext })
   }
 
+  let iframeOrigin: string | null = null
+  try {
+    iframeOrigin = new URL(opts.iframeUrl, location.href).origin
+  } catch {}
+  debug("start", { page: location.origin, room: iframeOrigin, sameOrigin: iframeOrigin === location.origin })
+
+  let exchange: ExchangeCapture | null = null
+  let crossOriginAdopted = false
+  if (iframeOrigin !== location.origin) observeExchange((c) => (exchange = c))
+
   window.addEventListener("message", (e: MessageEvent) => {
-    if (e.origin !== location.origin) return
     const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
     if (!frame || e.source !== frame.contentWindow) return
     const name = e.data && typeof e.data === "object" ? (e.data as { event_name?: unknown }).event_name : null
+    // An adopted cross-origin room may only END the session; its payload is never trusted.
+    if (e.origin !== location.origin) {
+      if (crossOriginAdopted && e.origin === iframeOrigin && name === "qiscus:session-closed") {
+        debug("room message (cross-origin)", name)
+        void ctl.sessionClosed()
+      }
+      return
+    }
     debug("room message", name)
     if (name === "qiscus:session-ready") {
       resumeHandlers?.onReady()
@@ -335,19 +416,29 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     }
   })
 
-  let iframeOrigin: string | null = null
-  try {
-    iframeOrigin = new URL(opts.iframeUrl, location.href).origin
-  } catch {}
-
   return {
     beginInvite: () => ctl.beginInvite(),
     inviteFailed: () => void ctl.inviteFailed(),
     handoffReady: () => {
-      // A room on another origin cannot hand its SDK login to this page.
-      if (iframeOrigin !== location.origin) void ctl.crossOriginRoom()
+      if (iframeOrigin === location.origin) return void debug("handoff ready (same-origin room)")
+      // QismoFull announces handoff-ready from its own XHR onload, which runs
+      // BEFORE our load listener on that same request: wait one task so the
+      // exchange response has been read.
+      setTimeout(() => {
+        debug("handoff ready (cross-origin room)", { exchangeSeen: !!exchange })
+        // A room on another origin cannot hand its SDK login to this page; the
+        // exchange the page saw can, when that origin is allowed (TEMPORARY).
+        const seen = exchange
+        exchange = null
+        crossOriginAdopted = !!seen
+        void ctl.crossOriginRoom({ origin: iframeOrigin, exchange: seen })
+      }, 0)
     },
-    resume: () => ctl.resume(),
+    resume: async () => {
+      const s = await ctl.resume()
+      debug("resume", s ? { appId: s.appId, roomId: s.roomId } : "nothing to resume")
+      return s
+    },
     mountResumeRoom(session, handlers) {
       if (!APP_CODE_RE.test(session.appId)) return handlers.onFailed()
       resuming = true

@@ -42,6 +42,25 @@ describe("GET /push/config (synthetic)", () => {
     expect(text).not.toContain("must-not-leak")
   })
 
+  test("PUSH_ROOM_ORIGINS: bare origins accepted and normalised, anything else refused by name", async () => {
+    const base = {
+      ASSETS: fakeAssets,
+      FIREBASE_API_KEY: "AIza" + "S".repeat(35),
+      FIREBASE_PROJECT_ID: "synthetic-project",
+      FIREBASE_MESSAGING_SENDER_ID: "123456789012",
+      FIREBASE_APP_ID: "1:123456789012:web:abcdef0123456789",
+      FIREBASE_VAPID_KEY: await vapid(),
+    }
+    const read = async (v?: string) => (await (await app.request("/push/config", {}, { ...base, PUSH_ROOM_ORIGINS: v })).json()) as any
+    expect((await read()).roomOrigins).toEqual([])
+    expect((await read(" https://omnichannel.qiscus.com/ , https://omnichannel.qiscus.com")).roomOrigins).toEqual(["https://omnichannel.qiscus.com"])
+    for (const bad of ["http://omnichannel.qiscus.com", "https://omnichannel.qiscus.com/iframes", "https://a.qiscus.com?x=1", "not a url", ","]) {
+      const body = await read(bad)
+      expect(body.status).toBe("unconfigured")
+      expect(body.invalid).toEqual(["PUSH_ROOM_ORIGINS"])
+    }
+  })
+
   test("only GET is routed", async () => {
     const res = await app.request("/push/config", { method: "POST" }, { ASSETS: fakeAssets })
     expect(res.status).toBe(404)

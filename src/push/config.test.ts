@@ -112,6 +112,7 @@ describe("readPushConfig (synthetic)", () => {
         "FIREBASE_APP_ID",
         "FIREBASE_VAPID_KEY",
         "PUSH_APP_CODES",
+        "PUSH_ROOM_ORIGINS",
       ].sort(),
     )
   })

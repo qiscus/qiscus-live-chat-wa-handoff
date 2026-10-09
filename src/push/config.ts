@@ -20,6 +20,7 @@ export const PUSH_ENV_KEYS = [
   "FIREBASE_APP_ID",
   "FIREBASE_VAPID_KEY",
   "PUSH_APP_CODES",
+  "PUSH_ROOM_ORIGINS",
 ] as const
 
 export type PushEnvKey = (typeof PUSH_ENV_KEYS)[number]
@@ -40,6 +41,15 @@ export type PushConfig =
       vapidKey: string
       /** null = every app may enable push. */
       appCodes: string[] | null
+      /**
+       * TEMPORARY: origins of a CROSS-origin room iframe (e.g. the default
+       * https://omnichannel.qiscus.com) for which the page may still enable
+       * push, by verifying the exchange's identity token itself. Empty = only
+       * the same-origin room. Meant to come from the WA handoff "Allowed
+       * domains" setting once qismo-api exposes it publicly; until then the
+       * Worker's PUSH_ROOM_ORIGINS.
+       */
+      roomOrigins: string[]
     }
   | {
       status: "unconfigured"
@@ -82,6 +92,21 @@ export function isVapidPublicKey(value: string): boolean {
   return !!bytes && bytes.length === 65 && bytes[0] === 0x04
 }
 
+/** A bare https origin (http only for localhost), or null. Paths, queries and credentials are refused. */
+function asRoomOrigin(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1"
+  if (!(url.protocol === "https:" || (local && url.protocol === "http:"))) return null
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null
+  if (value.replace(/\/$/, "") !== url.origin) return null
+  return url.origin
+}
+
 export function readPushConfig(env: PushEnv): PushConfig {
   const get = (k: PushEnvKey) => {
     const v = env[k]
@@ -98,6 +123,7 @@ export function readPushConfig(env: PushEnv): PushConfig {
   const vapidKey = get("FIREBASE_VAPID_KEY")
   const authDomain = get("FIREBASE_AUTH_DOMAIN")
   const appCodesRaw = get("PUSH_APP_CODES")
+  const roomOriginsRaw = get("PUSH_ROOM_ORIGINS")
 
   if (apiKey && !API_KEY.test(apiKey)) invalid.push("FIREBASE_API_KEY")
   if (projectId && !PROJECT_ID.test(projectId)) invalid.push("FIREBASE_PROJECT_ID")
@@ -121,9 +147,20 @@ export function readPushConfig(env: PushEnv): PushConfig {
     else appCodes = list
   }
 
+  let roomOrigins: string[] = []
+  if (roomOriginsRaw) {
+    const list = roomOriginsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(asRoomOrigin)
+    if (list.length === 0 || list.some((o) => o === null)) invalid.push("PUSH_ROOM_ORIGINS")
+    else roomOrigins = [...new Set(list as string[])]
+  }
+
   if (missing.length || invalid.length) return { status: "unconfigured", missing, invalid }
 
   const firebase: FirebaseWebConfig = { apiKey, projectId, messagingSenderId: senderId, appId }
   if (authDomain) firebase.authDomain = authDomain
-  return { status: "configured", firebase, vapidKey, appCodes }
+  return { status: "configured", firebase, vapidKey, appCodes, roomOrigins }
 }
