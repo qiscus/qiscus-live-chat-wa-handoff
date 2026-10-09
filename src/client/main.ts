@@ -127,6 +127,7 @@ const STYLE = `
 #handoff-push .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 #handoff-push button{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f}
 #handoff-push button.primary{background:#27b199;color:#fff}
+#handoff-push .detail{margin:0 0 8px;font-size:12px;color:#6b7280;word-break:break-word}
 #handoff-push input{font:inherit;width:100%;box-sizing:border-box;padding:8px;margin:0 0 8px;border:1px solid #cfd4dc;border-radius:8px}
 `
 
@@ -177,15 +178,21 @@ function createUi(actions: { enable(): void; disable(): void }) {
     root.hidden = true
   }
 
-  function show(text: string, buttons: HTMLButtonElement[]) {
+  function show(text: string, buttons: HTMLButtonElement[], detail?: string) {
     clearTimeout(hideTimer)
     root.replaceChildren()
     const p = document.createElement("p")
     p.textContent = text
+    root.appendChild(p)
+    if (detail) {
+      const d = document.createElement("p")
+      d.className = "detail"
+      d.textContent = detail
+      root.appendChild(d)
+    }
     const row = document.createElement("div")
     row.className = "row"
     for (const b of buttons) row.appendChild(b)
-    root.appendChild(p)
     root.appendChild(row)
     root.hidden = false
   }
@@ -209,7 +216,12 @@ function createUi(actions: { enable(): void; disable(): void }) {
         if (dismissed()) return void (root.hidden = true)
         return show(TEXT.iosInstall, [button(TEXT.close, dismiss)])
       case "error":
-        return show(TEXT.error, [button(TEXT.close, () => (root.hidden = true)), button(TEXT.retry, actions.enable, true)])
+        return show(
+          TEXT.error,
+          [button(TEXT.close, () => (root.hidden = true)), button(TEXT.retry, actions.enable, true)],
+          // Shown on the page: after a reopen the console trail is gone.
+          `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
+        )
       case "unconfigured":
         // Not a customer-facing condition; visible to operators in the console.
         console.info("[handoff-push] push is not configured; missing:", state.missing.join(", ") || "-", "invalid:", state.invalid.join(", ") || "-")

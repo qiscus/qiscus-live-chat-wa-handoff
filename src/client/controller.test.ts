@@ -2,7 +2,7 @@
 // API (fetch), a fake FCM (token minting), a fake Notification permission
 // and a fake service-worker context store. No browser, no network.
 import { describe, expect, test } from "bun:test"
-import { PushController, REG_KEY, OPT_IN_KEY, type PushDeps, type PushUiState } from "./controller"
+import { PushController, REG_KEY, OPT_IN_KEY, errorDetail, type PushDeps, type PushUiState } from "./controller"
 import { detectSupport } from "./support"
 import { loadSession, saveSession, stashSessionForInvite, type SdkUser } from "./session"
 import { MemoryStorage } from "./testing"
@@ -409,7 +409,7 @@ describe("PushController (synthetic)", () => {
     h.login("app1", "11", "c1@example.invalid")
     await h.ctl.sessionReady()
     await h.ctl.enable()
-    expect(h.last()).toEqual({ kind: "error", reason: "http-401" })
+    expect(h.last()).toEqual({ kind: "error", reason: "http-401", detail: "set_user_device_token HTTP 401" })
     expect(h.storage.getItem(REG_KEY)).toBeNull()
     expect(h.swWrites).toEqual([])
   })
@@ -422,8 +422,15 @@ describe("PushController (synthetic)", () => {
     }
     await h.ctl.sessionReady()
     await h.ctl.enable()
-    expect(h.last()).toEqual({ kind: "error", reason: "fcm" })
+    expect(h.last()).toEqual({ kind: "error", reason: "fcm", detail: "Error: synthetic messaging/token-subscribe-failed" })
     expect(h.sdkCalls).toEqual([])
+  })
+
+  test("error detail names the failure but never shows a token-like value", () => {
+    const e = Object.assign(new Error("Registration failed - push service error"), { name: "AbortError" })
+    expect(errorDetail(e)).toBe("AbortError: Registration failed - push service error")
+    expect(errorDetail(new Error("bad token " + "A".repeat(150)))).toBe("Error: bad token …")
+    expect(errorDetail("x".repeat(500)).length).toBeLessThanOrEqual(200)
   })
 
   test("the state never contains a token", async () => {

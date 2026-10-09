@@ -46,13 +46,25 @@ export type PushUiState =
   | { kind: "busy" }
   | { kind: "enabled" }
   | { kind: "denied" }
-  | { kind: "error"; reason: string }
+  | { kind: "error"; reason: string; detail?: string }
 
 /** What the page saw of the invite exchange. In memory only, never stored. */
 export interface ExchangeCapture {
   appId: string
   roomId: string
   identityToken: string
+}
+
+/**
+ * A short, display-safe description of a thrown error, for the on-page error
+ * notice (operators cannot read the console after the page is reopened).
+ * Long token-like runs are cut out, so nothing credential-shaped is shown.
+ */
+export function errorDetail(e: unknown): string {
+  const err = e as { name?: unknown; code?: unknown; message?: unknown } | null
+  const parts = [err?.name, err?.code, err?.message].filter((x): x is string => typeof x === "string" && x.length > 0)
+  const raw = parts.length ? [...new Set(parts)].join(": ") : String(e)
+  return raw.replace(/[A-Za-z0-9_:.\-]{40,}/g, "…").replace(/\s+/g, " ").trim().slice(0, 200)
 }
 
 export interface SwContext {
@@ -293,7 +305,7 @@ export class PushController {
       token = await this.deps.fcm.getToken(cfg)
     } catch (e) {
       this.log("FCM token minting failed", String(e))
-      return { kind: "error", reason: "fcm" }
+      return { kind: "error", reason: "fcm", detail: errorDetail(e) }
     }
     this.log("FCM token minted", { projectId: cfg.firebase.projectId })
     const reg = this.loadReg()
@@ -301,7 +313,7 @@ export class PushController {
     if (!sameToken) {
       const r = await setDeviceToken(this.deps.fetch, session, token)
       this.log("set_user_device_token", { ok: r.ok, status: r.status, appId: session.appId, roomId: session.roomId })
-      if (!r.ok) return { kind: "error", reason: r.error || "register" }
+      if (!r.ok) return { kind: "error", reason: r.error || "register", detail: `set_user_device_token HTTP ${r.status || "-"}` }
       // Rotated token: the old one must not keep receiving.
       if (reg && reg.fcmToken !== token && this.ownedBy(reg, session)) {
         await removeDeviceToken(this.deps.fetch, session, reg.fcmToken)

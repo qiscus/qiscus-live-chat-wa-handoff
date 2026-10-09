@@ -512,6 +512,28 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
+    "enable fails: the notice shows the failure code and reason on the page (console is gone after a reopen)",
+    async () => {
+      upstream.reset()
+      const ctx = await newContext({ grant: true })
+      await ctx.addInitScript(`window.__HANDOFF_PUSH_TEST__.fcm.getToken = async () => {
+        throw Object.assign(new Error('Registration failed - push service error'), { name: 'AbortError' });
+      };`)
+      const page = await ctx.newPage()
+      await page.goto(invite("synthetic-invite-A"))
+      await waitPushState(page, "offer")
+      await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+      await waitPushState(page, "error")
+      const text = await page.locator("#handoff-push").innerText()
+      expect(text).toContain("Notifikasi belum bisa diaktifkan")
+      expect(text).toContain("Kode: fcm — AbortError: Registration failed - push service error")
+      expect(upstream.deviceCalls).toEqual([])
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
     "unconfigured Worker: push stays off and says why in the console",
     async () => {
       await configurePush(false)
