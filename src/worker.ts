@@ -13,8 +13,10 @@
  * defaults (overridable via `?baseUrl=`, `?iframeUrl=`, `?scriptUrl=`).
  *
  * This Worker itself only serves `/` (a landing note), the handoff room at
- * `/iframes/v5/:app_code/live-handover-room`, and static assets
- * (`/widget.html`, `/js/*`, `/css/*`, `/img/*`) — no server logic, no secrets.
+ * `/iframes/v5/:app_code/live-handover-room`, `GET /push/config` (public FCM
+ * web config for the push opt-in, see README) and static assets
+ * (`/widget.html`, `/sw.js`, `/manifest.webmanifest`, `/js/*`, `/css/*`,
+ * `/img/*`). It sends no push and holds no secrets.
  */
 import { Hono } from "hono"
 import { type PushEnv, readPushConfig } from "./push/config"
