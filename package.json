@@ -12,13 +12,15 @@
     "@cloudflare/workers-types": "^5.20260917.1",
     "@types/bun": "latest",
     "bun-types": "^1.4.2",
+    "playwright-core": "1.64.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "alchemy": "2.0.0-beta.77",
-    "effect": "4.0.0-rc.112",
     "@effect/platform-bun": "4.0.0-rc.112",
     "@effect/platform-node": "4.0.0-rc.112",
+    "alchemy": "2.0.0-beta.77",
+    "effect": "4.0.0-rc.112",
+    "firebase": "13.0.0",
     "hono": "^4"
   },
   "overrides": {

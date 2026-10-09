@@ -17,8 +17,20 @@
  * (`/widget.html`, `/js/*`, `/css/*`, `/img/*`) — no server logic, no secrets.
  */
 import { Hono } from "hono"
+import { type PushEnv, readPushConfig } from "./push/config"
 
-const app = new Hono<{ Bindings: { ASSETS: Fetcher } }>()
+type Bindings = { ASSETS: Fetcher } & PushEnv
+
+const app = new Hono<{ Bindings: Bindings }>()
+
+// Public Web Push (FCM) config for the page: Firebase web-app config + VAPID
+// public key, or `unconfigured` with the missing/invalid env NAMES. Only
+// public identifiers leave here; the Worker holds no sender credentials and
+// sends no push — the existing Qiscus sender does. Same-origin only (no CORS).
+app.get("/push/config", (c) => {
+  c.header("Cache-Control", "no-store")
+  return c.json(readPushConfig(c.env))
+})
 
 app.get("/", (c) => {
   return c.html(`<!doctype html>

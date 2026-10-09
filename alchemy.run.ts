@@ -15,6 +15,18 @@
 import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Effect from "effect/Effect"
+import { PUSH_ENV_KEYS } from "./src/push/config"
+
+// Public Web Push (FCM) config, read from the deploying shell's environment.
+// Only keys that are set are bound, as plain_text (they are public client
+// identifiers: Firebase web-app config + VAPID PUBLIC key). Never put the
+// Firebase service-account JSON here — the Worker does not send pushes.
+// With none set, /push/config reports `unconfigured` and push stays off.
+const pushEnv: Record<string, string> = {}
+for (const key of PUSH_ENV_KEYS) {
+  const value = process.env[key]?.trim()
+  if (value) pushEnv[key] = value
+}
 
 export default Alchemy.Stack(
   "LiveHandoverWidget",
@@ -35,6 +47,7 @@ export default Alchemy.Stack(
         htmlHandling: "none",
       },
       workersDev: true,
+      env: pushEnv,
       // Keep the existing sample alias attached when updating this Worker.
       // Replace with a domain/zone you control before deploying your own copy.
       domain: {
