@@ -239,7 +239,8 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     server = Bun.serve({ port: 0, hostname: "localhost", fetch: (req) => assets.fetch(req).then((r) => (r.status === 404 ? app.fetch(req, env) : r)) })
     ORIGIN = `http://localhost:${server.port}`
     browser = await chromium.launch({ executablePath: CHROME, headless: true })
-  })
+    // A cold Chrome start alone can exceed bun's 5 s hook default.
+  }, 60_000)
 
   afterAll(async () => {
     await browser?.close()
