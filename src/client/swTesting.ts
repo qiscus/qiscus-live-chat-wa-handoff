@@ -116,7 +116,7 @@ export async function loadServiceWorker(source: string, origin = "https://handof
       return {
         addAll: async (urls: string[]) => urls.forEach((u) => c.set(new URL(u, origin).href, new Response("cached:" + u))),
         match: async (r: Request | string) => c.get(typeof r === "string" ? new URL(r, origin).href : r.url)?.clone(),
-        put: async (r: Request, res: Response) => void c.set(r.url, res),
+        put: async (r: Request | string, res: Response) => void c.set(typeof r === "string" ? new URL(r, origin).href : r.url, res),
       }
     },
     async keys() {

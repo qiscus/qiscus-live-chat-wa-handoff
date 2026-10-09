@@ -12,9 +12,16 @@
  * target is a fixed same-origin URL — nothing from the payload is ever used
  * for display or navigation.
  *
- * Caching: only the static shell below. The chat page itself is network-first
- * and never cached; APIs, the room iframe and anything cross-origin are never
- * intercepted.
+ * Caching: only the static shell below, and only as an OFFLINE fallback: every
+ * shell request goes to the network first and refreshes the cached copy, so a
+ * deploy is visible on the next load without bumping any cache name. The chat
+ * page itself is network-first and never cached; APIs, the room iframe and
+ * anything cross-origin are never intercepted.
+ *
+ * Updates: install -> skipWaiting, activate -> clients.claim, so a changed
+ * sw.js takes over at once instead of waiting for every tab to close. The page
+ * registers with updateViaCache "none" and calls registration.update() when it
+ * becomes visible again (src/client/main.ts).
  */
 
 /* global self, clients, caches, indexedDB */
@@ -27,7 +34,7 @@ const RESUME_PATH = "/widget.html"
 const RESUME_URL = "/widget.html?source=notification"
 const HOUSEKEEPING_TAG = "handoff-housekeeping"
 
-const SHELL_CACHE = "handoff-shell-v1"
+const SHELL_CACHE = "handoff-shell-v2"
 const SHELL_PREFIX = "handoff-shell-"
 const SHELL = ["/offline.html", "/manifest.webmanifest", "/img/pwa/icon-192.png", "/img/pwa/icon-512.png"]
 
@@ -203,7 +210,27 @@ function routeFetch(event) {
     return
   }
   if (SHELL.includes(url.pathname)) {
-    event.respondWith(caches.match(url.pathname).then((hit) => hit || fetch(req)))
+    event.respondWith(networkFirstShell(req, url.pathname))
+  }
+}
+
+// Network first, cached copy only when the network fails. A fresh 200 replaces
+// the cached copy, so the shell never pins an old deploy.
+async function networkFirstShell(req, path) {
+  try {
+    const res = await fetch(req)
+    if (res && res.ok) {
+      const copy = res.clone()
+      caches
+        .open(SHELL_CACHE)
+        .then((cache) => cache.put(path, copy))
+        .catch(() => {})
+    }
+    return res
+  } catch (e) {
+    const hit = await caches.match(path)
+    if (hit) return hit
+    throw e
   }
 }
 

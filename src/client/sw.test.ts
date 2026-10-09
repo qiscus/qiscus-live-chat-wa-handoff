@@ -220,11 +220,26 @@ describe("sw.js cache scope (synthetic)", () => {
     expect(cachedPaths).not.toContain("/widget.html")
   })
 
-  test("shell assets are served cache-first", async () => {
+  test("shell assets are network-first and refresh the cached copy (a deploy is never pinned)", async () => {
     await sw.dispatch("install", {})
-    const ev: any = { request: req(ORIGIN + "/img/pwa/icon-192.png") }
+    const ev: any = { request: req(ORIGIN + "/manifest.webmanifest") }
     await sw.dispatch("fetch", ev)
-    expect(await ev.response.text()).toBe("cached:/img/pwa/icon-192.png")
+    expect(await ev.response.text()).toBe("network:" + ORIGIN + "/manifest.webmanifest")
+    await new Promise((r) => setTimeout(r, 0))
+    const stored = [...sw.cache.values()].map((c) => c.get(ORIGIN + "/manifest.webmanifest")).find(Boolean)
+    expect(await stored!.clone().text()).toBe("network:" + ORIGIN + "/manifest.webmanifest")
+  })
+
+  test("shell assets fall back to the cached copy only when the network fails", async () => {
+    await sw.dispatch("install", {})
+    const ev: any = { request: req(ORIGIN + "/offline.html?offline-test=1") }
+    await sw.dispatch("fetch", ev)
+    expect(await ev.response.text()).toBe("cached:/offline.html")
+  })
+
+  test("a new sw.js takes over immediately: skipWaiting on install, clients.claim on activate", () => {
+    expect(SW_SOURCE).toMatch(/install\(\)\.then\(\(\) => self\.skipWaiting\(\)\)/)
+    expect(SW_SOURCE).toContain("await clients.claim()")
   })
 })
 

@@ -30,13 +30,53 @@ type Fcm = PushDeps["fcm"]
 
 // ------------------------------------------------------------ service worker
 
+// Debug trail for operators (DevTools console, "Verbose" level). Never logs a
+// token, an e-mail or any message content.
+export function debug(...args: unknown[]): void {
+  try {
+    console.debug("[handoff-push]", ...args)
+  } catch {}
+}
+
+// How often a visible page asks the browser to re-check /sw.js. The browser
+// already re-checks on navigation; this covers a PWA left open for days.
+const SW_UPDATE_EVERY_MS = 30 * 60 * 1000
+
 let swRegistration: Promise<ServiceWorkerRegistration> | null = null
+let swLastUpdate = 0
 function registerSw(): Promise<ServiceWorkerRegistration> {
   if (!swRegistration) {
-    swRegistration = navigator.serviceWorker.register(SW_URL, { scope: "/" }).then(() => navigator.serviceWorker.ready)
-    swRegistration.catch(() => (swRegistration = null))
+    // updateViaCache "none": the update check never goes through the HTTP
+    // cache, so a deployed sw.js is seen on the very next check.
+    swRegistration = navigator.serviceWorker
+      .register(SW_URL, { scope: "/", updateViaCache: "none" })
+      .then((reg) => {
+        debug("sw registered", { scope: reg.scope, active: !!reg.active, waiting: !!reg.waiting })
+        swLastUpdate = Date.now()
+        reg.addEventListener("updatefound", () => {
+          const next = reg.installing
+          debug("sw update found")
+          next?.addEventListener("statechange", () => debug("sw update state", next.state))
+        })
+        return navigator.serviceWorker.ready
+      })
+    swRegistration.catch((e) => {
+      debug("sw registration failed", String(e))
+      swRegistration = null
+    })
   }
   return swRegistration
+}
+
+/** Ask the browser to re-check /sw.js (throttled). A changed worker installs and takes over by itself. */
+function checkSwUpdate(force = false): void {
+  if (!swRegistration) return
+  if (!force && Date.now() - swLastUpdate < SW_UPDATE_EVERY_MS) return
+  swLastUpdate = Date.now()
+  void swRegistration
+    .then((reg) => reg.update())
+    .then(() => debug("sw update check done"))
+    .catch((e) => debug("sw update check failed", String(e)))
 }
 
 /**
@@ -257,6 +297,12 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
   // PWA shell: register the worker early (installability, offline page).
   if ("serviceWorker" in navigator && window.isSecureContext) {
     window.addEventListener("load", () => void registerSw().catch(() => {}))
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") checkSwUpdate()
+    })
+    navigator.serviceWorker.addEventListener("controllerchange", () => debug("sw controller changed (new version active)"))
+  } else {
+    debug("service worker unavailable", { secure: window.isSecureContext })
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
