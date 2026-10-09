@@ -215,6 +215,18 @@ function createUi(actions: { enable(): void; disable(): void }) {
         console.info("[handoff-push] push is not configured; missing:", state.missing.join(", ") || "-", "invalid:", state.invalid.join(", ") || "-")
         root.hidden = true
         return
+      case "cross-origin-room":
+        console.info("[handoff-push] push off: the room iframe is on another origin and is not in PUSH_ROOM_ORIGINS (or its exchange was not seen)")
+        root.hidden = true
+        return
+      case "app-not-enabled":
+        console.info("[handoff-push] push off: this app is not in PUSH_APP_CODES")
+        root.hidden = true
+        return
+      case "unsupported":
+        console.info("[handoff-push] push off: this browser has no Web Push here (needs HTTPS + PushManager)")
+        root.hidden = true
+        return
       default:
         root.hidden = true
     }
@@ -292,6 +304,7 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     fcm,
     swContext: { write: (ctx) => writeSwContext(indexedDB, ctx) },
     onState: (s) => ui.render(s),
+    debug,
   })
 
   // PWA shell: register the worker early (installability, offline page).
@@ -310,6 +323,7 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
     if (!frame || e.source !== frame.contentWindow) return
     const name = e.data && typeof e.data === "object" ? (e.data as { event_name?: unknown }).event_name : null
+    debug("room message", name)
     if (name === "qiscus:session-ready") {
       resumeHandlers?.onReady()
       void ctl.sessionReady()

@@ -67,6 +67,8 @@ export interface PushDeps {
   }
   swContext: { write(ctx: SwContext | null): Promise<void> }
   onState(state: PushUiState): void
+  /** Operator debug trail. Never receives a token, an e-mail or message content. */
+  debug?(...args: unknown[]): void
 }
 
 interface Registration {
@@ -157,12 +159,14 @@ export class PushController {
     const { session, cfg } = ctx
     this.emit({ kind: "busy" })
     let perm = this.deps.permission()
+    this.log("enable clicked", { permission: perm })
     if (perm !== "granted") {
       try {
         perm = await this.deps.requestPermission()
       } catch {
         perm = this.deps.permission()
       }
+      this.log("permission prompt answered", perm)
     }
     if (perm === "denied") {
       this.deps.storage.removeItem(OPT_IN_KEY)
@@ -223,16 +227,19 @@ export class PushController {
     }
     const cfg = await this.config()
     if (cfg.status !== "configured") {
+      this.log("push config not usable", { missing: cfg.missing, invalid: cfg.invalid })
       this.emit({ kind: "unconfigured", missing: cfg.missing, invalid: cfg.invalid })
       return null
     }
     if (cfg.appCodes && !cfg.appCodes.includes(session.appId)) {
+      this.log("app not in PUSH_APP_CODES", { appId: session.appId, allowed: cfg.appCodes })
       if (this.loadReg()) await this.teardown(session)
       this.emit({ kind: "app-not-enabled" })
       return null
     }
     const support = this.deps.support()
     if (support !== "supported") {
+      this.log("browser support", support)
       this.emit({ kind: support })
       return null
     }
@@ -243,13 +250,16 @@ export class PushController {
     let token: string
     try {
       token = await this.deps.fcm.getToken(cfg)
-    } catch {
+    } catch (e) {
+      this.log("FCM token minting failed", String(e))
       return { kind: "error", reason: "fcm" }
     }
+    this.log("FCM token minted", { projectId: cfg.firebase.projectId })
     const reg = this.loadReg()
     const sameToken = !!reg && reg.fcmToken === token && this.ownedBy(reg, session)
     if (!sameToken) {
       const r = await setDeviceToken(this.deps.fetch, session, token)
+      this.log("set_user_device_token", { ok: r.ok, status: r.status, appId: session.appId, roomId: session.roomId })
       if (!r.ok) return { kind: "error", reason: r.error || "register" }
       // Rotated token: the old one must not keep receiving.
       if (reg && reg.fcmToken !== token && this.ownedBy(reg, session)) {
@@ -318,6 +328,13 @@ export class PushController {
   }
 
   private emit(state: PushUiState): void {
+    this.log("state", state)
     this.deps.onState(state)
+  }
+
+  private log(...args: unknown[]): void {
+    try {
+      this.deps.debug?.(...args)
+    } catch {}
   }
 }
