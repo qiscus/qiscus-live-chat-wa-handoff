@@ -194,6 +194,13 @@ is put in a URL, the manifest or a cache.
   reports `cross-origin-room`. Intended source of the list: the WA handoff
   **Allowed domains** setting (`frame_ancestors`), which qismo-api exposes only
   to authenticated callers today.
+- **Push guidance is a local-only chat bubble.** With the room on this origin
+  (our `live-handover-room`), the offer / iOS steps / enable button are drawn
+  as the last item of the room's message list, labelled "Hanya terlihat oleh
+  Anda". It is plain DOM in this browser: never sent with `sendComment`, never
+  stored in Omnichannel, invisible to the agent. With a cross-origin room
+  (`omnichannel.qiscus.com`) the page cannot touch the frame, so the same
+  content is shown as a floating banner instead.
 - **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+), and
   "Add to Home Screen" exists only in Safari's share sheet, never in an in-app
   browser such as WhatsApp's. So:

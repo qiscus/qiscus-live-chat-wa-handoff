@@ -165,8 +165,10 @@ const SDK_STUB = `(function(){
     verifyIdentityToken:function(t){return fetch(BASE+'/api/v2/sdk/auth/verify_identity_token',{method:'POST',headers:{'Content-Type':'application/json','QISCUS-SDK-APP-ID':core.AppId},body:JSON.stringify({identity_token:t})}).then(function(r){if(!r.ok)throw r.status;return r.json();}).then(function(j){return j.results;});},
     setUserWithIdentityToken:function(e){core.userData=e.user;setTimeout(function(){core.cfg.options.loginSuccessCallback(e);},0);},
     chatGroup:function(id){return fetch(BASE+'/api/v2/sdk/get_room_by_id?id='+encodeURIComponent(id),{headers:{'QISCUS-SDK-APP-ID':core.AppId,'QISCUS-SDK-USER-ID':core.userData.email,'QISCUS-SDK-TOKEN':core.userData.token}}).then(function(r){if(!r.ok)throw r.status;core.selected={id:id};return r.json();});},
-    sendComment:function(){}};
-  window.QiscusSDK={core:core,render:function(){document.body.setAttribute('data-synthetic-sdk','rendered');}};
+    sendComment:function(){window.__sentComments=(window.__sentComments||0)+1;}};
+  window.QiscusSDK={core:core,render:function(){document.body.setAttribute('data-synthetic-sdk','rendered');
+    if(window.__SYNTH_ROOM_LIST__){var c=document.createElement('div');c.className='qcw-comments';c.style.cssText='height:600px;overflow:auto';
+      c.innerHTML='<div class="inner"><ul><li class="qcw-comment">synthetic agent message</li></ul></div>';document.body.appendChild(c);}}};
   window.QiscusUI={setCustomColors:function(){}};
 })();`
 
@@ -183,10 +185,12 @@ const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async () => 
   return 'synthetic-fcm-' + (reg.active ? 'sw' : 'nosw') + '-' + 'A'.repeat(120);
 } } };`
 
-async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean } = {}): Promise<BrowserContext> {
+async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean } = {}): Promise<BrowserContext> {
   const ctx = await browser.newContext({ userAgent: opts.userAgent })
   if (opts.grant) await ctx.grantPermissions(["notifications"], { origin: ORIGIN })
   await ctx.addInitScript(FCM_SEAM)
+  // the SDK stub renders a message list like the real room (.qcw-comments .inner)
+  if (opts.roomList) await ctx.addInitScript("window.__SYNTH_ROOM_LIST__ = true")
   if (opts.deny)
     await ctx.addInitScript(`(() => {
       Object.defineProperty(Notification, 'permission', { get: () => 'denied' });
@@ -481,6 +485,56 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         timeout: 15_000,
       })
       expect(await stored(page, SESSION_KEY)).toBeNull()
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "same-origin room: guidance is a local-only bubble inside the chat, with an interactive enable button",
+    async () => {
+      upstream.reset()
+      const ctx = await newContext({ grant: true, roomList: true })
+      const page = await ctx.newPage()
+      await page.goto(invite("synthetic-invite-A"))
+      await waitPushState(page, "offer")
+      const room = page.frameLocator("#qcw-iframe")
+      const bubble = room.locator("#handoff-bubble")
+      await bubble.waitFor()
+      expect(await bubble.innerText()).toContain("Hanya terlihat oleh Anda")
+      expect(await page.locator("#handoff-push").isHidden()).toBe(true) // no floating banner
+      // last item of the message list, after the real messages
+      expect(await room.locator(".qcw-comments .inner > :last-child").getAttribute("id")).toBe("handoff-bubble")
+      await room.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+      await waitPushState(page, "enabled")
+      expect(await bubble.innerText()).toContain("Notifikasi aktif")
+      expect(upstream.deviceCalls).toHaveLength(1)
+      // never sent as a chat message
+      const frame = page.frame({ url: /live-handover-room/ })!
+      expect(await frame.evaluate(() => (window as any).__sentComments || 0)).toBe(0)
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "iPhone WhatsApp in-app browser + same-origin room: Safari steps as a bubble in the chat",
+    async () => {
+      upstream.reset()
+      const ctx = await onHttpsHost({
+        roomList: true,
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.25.1",
+      })
+      const page = await ctx.newPage()
+      await page.goto(hostInvite("synthetic-invite-A"))
+      await waitPushState(page, "ios-open-safari")
+      const bubble = page.frameLocator("#qcw-iframe").locator("#handoff-bubble")
+      await bubble.waitFor()
+      const text = await bubble.innerText()
+      expect(text).toContain("Kalau ingin mendapatkan notifikasi di Live Chat")
+      expect(text).toContain("Safari")
+      expect(await bubble.locator("li").count()).toBe(3)
+      expect(await page.locator("#handoff-push").isHidden()).toBe(true)
       await ctx.close()
     },
     60_000,

@@ -127,13 +127,14 @@ const STYLE = `
 #handoff-push .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 #handoff-push button{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f}
 #handoff-push button.primary{background:#27b199;color:#fff}
-#handoff-push ol{margin:0 0 8px;padding-left:20px}
+#handoff-push ul{margin:0 0 8px;padding-left:20px;list-style:disc outside}
 #handoff-push .detail{margin:0 0 8px;font-size:12px;color:#6b7280;word-break:break-word}
 #handoff-push input{font:inherit;width:100%;box-sizing:border-box;padding:8px;margin:0 0 8px;border:1px solid #cfd4dc;border-radius:8px}
 `
 
 const TEXT = {
-  offer: "Dapatkan notifikasi saat agen membalas, meski halaman ini ditutup.",
+  offer: "Mau dapat notifikasi saat agen membalas, meski halaman ini ditutup?",
+  onlyYou: "Hanya terlihat oleh Anda",
   enable: "Aktifkan notifikasi",
   later: "Nanti",
   close: "Tutup",
@@ -142,17 +143,18 @@ const TEXT = {
   off: "Matikan",
   denied:
     "Notifikasi diblokir di browser ini. Jika ingin diberi tahu saat agen membalas, izinkan notifikasi untuk situs ini di pengaturan browser.",
-  iosInstall: "Pasang Live Chat di Layar Utama agar dapat notifikasi saat agen membalas (iOS 16.4+):",
+  iosInstall: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu memasangnya di Layar Utama (iOS 16.4+):",
   iosInstallSteps: [
     "Ketuk “Salin link” di bawah.",
     "Ketuk tombol Bagikan, lalu “Tambah ke Layar Utama” (pastikan “Buka sebagai Web App” aktif).",
     "Buka Live Chat dari Layar Utama, lalu ketuk “Tempel”.",
   ],
   iosNoAddOption: "Tidak ada pilihan “Tambah ke Layar Utama”? Buka halaman ini di Safari dulu.",
-  iosOpenSafari: "Untuk menerima notifikasi, pasang Live Chat di Layar Utama. Itu hanya bisa dari Safari:",
+  iosOpenSafari: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu membukanya di Safari lalu memasangnya di Layar Utama:",
   iosOpenSafariSteps: [
     "Ketuk menu ⋯ di halaman ini, lalu pilih buka di Safari / browser.",
-    "Atau: ketuk “Salin link”, buka Safari, lalu tempel di kolom alamat.",
+    "Atau ketuk “Salin link”, buka Safari, lalu tempel di kolom alamat.",
+    "Di Safari, ikuti petunjuk berikutnya untuk menambahkan ke Layar Utama.",
   ],
   copyLink: "Salin link",
   copied: "Link disalin",
@@ -193,6 +195,114 @@ function copyLinkButton(primary = false): HTMLButtonElement {
   return b
 }
 
+/**
+ * Push guidance is shown as a "virtual" chat bubble at the end of the room's
+ * message list: rendered only in this browser, never sent with sendComment,
+ * so it exists nowhere in Omnichannel and the agent never sees it. That needs
+ * the room iframe on THIS origin (our own room page). A cross-origin room, or
+ * a room that has not rendered yet, falls back to the floating banner.
+ */
+const BUBBLE_ID = "handoff-bubble"
+const BUBBLE_STYLE = `
+#handoff-bubble{display:flex;flex-direction:column;align-items:flex-start;margin:8px 12px 16px;
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#23272f}
+#handoff-bubble[hidden]{display:none}
+#handoff-bubble .hb-bubble{max-width:85%;box-sizing:border-box;padding:10px 12px;border-radius:12px 12px 12px 4px;
+  background:#f1f3f5;border:1px dashed #cfd4dc}
+#handoff-bubble p{margin:0 0 8px}
+#handoff-bubble ul{margin:0 0 8px;padding-left:20px;list-style:disc outside}
+#handoff-bubble li{margin:0 0 4px;display:list-item;list-style:inherit}
+#handoff-bubble .detail{font-size:12px;color:#6b7280;word-break:break-word}
+#handoff-bubble .row{display:flex;gap:8px;flex-wrap:wrap}
+#handoff-bubble button{font:inherit;border:1px solid #27b199;border-radius:16px;padding:6px 12px;cursor:pointer;background:#fff;color:#1f8f7b}
+#handoff-bubble button.primary{background:#27b199;color:#fff}
+#handoff-bubble .hb-meta{margin-top:4px;font-size:11px;color:#8a919c}
+`
+
+interface View {
+  text: string
+  buttons: HTMLButtonElement[]
+  detail?: string
+  steps?: string[]
+  autoHideMs?: number
+}
+
+function fill(container: HTMLElement, v: View): void {
+  const doc = container.ownerDocument
+  const nodes: Node[] = []
+  const p = doc.createElement("p")
+  p.textContent = v.text
+  nodes.push(p)
+  if (v.steps) {
+    const list = doc.createElement("ul")
+    for (const step of v.steps) {
+      const li = doc.createElement("li")
+      li.textContent = step
+      list.appendChild(li)
+    }
+    nodes.push(list)
+  }
+  if (v.detail) {
+    const d = doc.createElement("p")
+    d.className = "detail"
+    d.textContent = v.detail
+    nodes.push(d)
+  }
+  if (v.buttons.length) {
+    const row = doc.createElement("div")
+    row.className = "row"
+    for (const b of v.buttons) row.appendChild(b)
+    nodes.push(row)
+  }
+  container.replaceChildren(...nodes)
+}
+
+const watched = new WeakSet<Element>()
+
+/** The bubble host inside a same-origin room's message list, or null. */
+function roomBubble(): { wrap: HTMLElement; body: HTMLElement } | null {
+  const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
+  let doc: Document | null = null
+  try {
+    doc = frame?.contentDocument ?? null // null for a cross-origin room
+  } catch {
+    return null
+  }
+  const inner = doc?.querySelector(".qcw-comments .inner")
+  if (!doc || !inner) return null
+  if (!doc.getElementById("handoff-bubble-style")) {
+    const st = doc.createElement("style")
+    st.id = "handoff-bubble-style"
+    st.textContent = BUBBLE_STYLE
+    doc.head.appendChild(st)
+  }
+  let wrap = doc.getElementById(BUBBLE_ID)
+  if (!wrap) {
+    wrap = doc.createElement("div")
+    wrap.id = BUBBLE_ID
+    wrap.setAttribute("role", "status")
+    wrap.setAttribute("aria-live", "polite")
+    wrap.dataset.virtual = "true" // local only: not a message, not in Omnichannel
+    const bubbleBody = doc.createElement("div")
+    bubbleBody.className = "hb-bubble"
+    const meta = doc.createElement("div")
+    meta.className = "hb-meta"
+    meta.textContent = TEXT.onlyYou
+    wrap.appendChild(bubbleBody)
+    wrap.appendChild(meta)
+  }
+  if (inner.lastElementChild !== wrap) inner.appendChild(wrap)
+  if (!watched.has(inner)) {
+    // The SDK (Vue) may append its own nodes after ours: keep the bubble last.
+    watched.add(inner)
+    new MutationObserver(() => {
+      const w = doc!.getElementById(BUBBLE_ID)
+      if (w && !w.hidden && inner.lastElementChild !== w) inner.appendChild(w)
+    }).observe(inner, { childList: true })
+  }
+  return { wrap, body: wrap.querySelector(".hb-bubble") as HTMLElement }
+}
+
 function createUi(actions: { enable(): void; disable(): void }) {
   const style = document.createElement("style")
   style.textContent = STYLE
@@ -204,104 +314,110 @@ function createUi(actions: { enable(): void; disable(): void }) {
   root.hidden = true
   document.body.appendChild(root)
   let hideTimer: ReturnType<typeof setTimeout> | undefined
+  let retryTimer: ReturnType<typeof setInterval> | undefined
+  let lastState: PushUiState | null = null
 
   const dismissed = () => sessionStorage.getItem(DISMISS_KEY) === "1"
+  const hideAll = () => {
+    clearTimeout(hideTimer)
+    clearInterval(retryTimer)
+    root.hidden = true
+    const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
+    try {
+      const w = frame?.contentDocument?.getElementById(BUBBLE_ID)
+      if (w) w.hidden = true
+    } catch {}
+  }
   const dismiss = () => {
     sessionStorage.setItem(DISMISS_KEY, "1")
-    root.hidden = true
+    hideAll()
   }
 
-  function show(text: string, buttons: HTMLButtonElement[], detail?: string, steps?: string[]) {
-    clearTimeout(hideTimer)
-    root.replaceChildren()
-    const p = document.createElement("p")
-    p.textContent = text
-    root.appendChild(p)
-    if (steps) {
-      const ol = document.createElement("ol")
-      for (const step of steps) {
-        const li = document.createElement("li")
-        li.textContent = step
-        ol.appendChild(li)
+  function paint(v: View | null) {
+    hideAll()
+    if (!v) return
+    const bubble = roomBubble()
+    if (bubble) {
+      fill(bubble.body, v)
+      bubble.wrap.hidden = false
+      const list = bubble.wrap.closest(".qcw-comments") as HTMLElement | null
+      if (list) list.scrollTop = list.scrollHeight
+    } else {
+      fill(root, v)
+      root.hidden = false
+      // The same-origin room may still be loading: move into it once it renders.
+      if (document.getElementById(IFRAME_ID)) {
+        let tries = 0
+        retryTimer = setInterval(() => {
+          if (++tries > 60) return clearInterval(retryTimer)
+          if (roomBubble() && lastState) render(lastState)
+        }, 500)
       }
-      root.appendChild(ol)
     }
-    if (detail) {
-      const d = document.createElement("p")
-      d.className = "detail"
-      d.textContent = detail
-      root.appendChild(d)
+    if (v.autoHideMs) hideTimer = setTimeout(hideAll, v.autoHideMs)
+  }
+
+  function view(state: PushUiState): View | null {
+    switch (state.kind) {
+      case "offer":
+        if (dismissed()) return null
+        return { text: TEXT.offer, buttons: [button(TEXT.later, dismiss), button(TEXT.enable, actions.enable, true)] }
+      case "busy":
+        return { text: TEXT.busy, buttons: [] }
+      case "enabled":
+        return { text: TEXT.enabled, buttons: [button(TEXT.off, actions.disable), button(TEXT.close, hideAll)], autoHideMs: 8000 }
+      case "denied":
+        if (dismissed()) return null
+        return { text: TEXT.denied, buttons: [button(TEXT.close, dismiss)] }
+      case "ios-install":
+        if (dismissed()) return null
+        return {
+          text: TEXT.iosInstall,
+          steps: TEXT.iosInstallSteps,
+          detail: TEXT.iosNoAddOption,
+          buttons: [button(TEXT.later, dismiss), copyLinkButton(true)],
+        }
+      case "ios-open-safari":
+        if (dismissed()) return null
+        // No "open in Safari" button: WhatsApp iOS ignores x-safari-https://
+        // (tested on a real iPhone, 2026-10-12), and a dead button is worse
+        // than instructions.
+        return { text: TEXT.iosOpenSafari, steps: TEXT.iosOpenSafariSteps, buttons: [button(TEXT.later, dismiss), copyLinkButton(true)] }
+      case "error":
+        return {
+          // "fcm" = the browser could not reach its push service (e.g. a
+          // de-Googled Chromium such as Helium): retrying here will not help.
+          text: state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error,
+          buttons: [button(TEXT.close, hideAll), button(TEXT.retry, actions.enable, true)],
+          // Shown on the page: after a reopen the console trail is gone.
+          detail: `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
+        }
+      case "unconfigured":
+        // Not a customer-facing condition; visible to operators in the console.
+        console.info("[handoff-push] push is not configured; missing:", state.missing.join(", ") || "-", "invalid:", state.invalid.join(", ") || "-")
+        return null
+      case "cross-origin-room":
+        console.info("[handoff-push] push off: the room iframe is on another origin and is not in PUSH_ROOM_ORIGINS (or its exchange was not seen)")
+        return null
+      case "app-not-enabled":
+        console.info("[handoff-push] push off: this app is not in PUSH_APP_CODES")
+        return null
+      case "unsupported":
+        console.info("[handoff-push] push off: this browser has no Web Push here (needs HTTPS + PushManager)")
+        return null
+      default:
+        return null
     }
-    const row = document.createElement("div")
-    row.className = "row"
-    for (const b of buttons) row.appendChild(b)
-    root.appendChild(row)
-    root.hidden = false
   }
 
   function render(state: PushUiState) {
     document.documentElement.dataset.handoffPush = state.kind
-    switch (state.kind) {
-      case "offer":
-        if (dismissed()) return void (root.hidden = true)
-        return show(TEXT.offer, [button(TEXT.later, dismiss), button(TEXT.enable, actions.enable, true)])
-      case "busy":
-        return show(TEXT.busy, [])
-      case "enabled":
-        show(TEXT.enabled, [button(TEXT.off, actions.disable), button(TEXT.close, () => (root.hidden = true))])
-        hideTimer = setTimeout(() => (root.hidden = true), 8000)
-        return
-      case "denied":
-        if (dismissed()) return void (root.hidden = true)
-        return show(TEXT.denied, [button(TEXT.close, dismiss)])
-      case "ios-install": {
-        if (dismissed()) return void (root.hidden = true)
-        return show(
-          TEXT.iosInstall,
-          [button(TEXT.later, dismiss), copyLinkButton(true)],
-          TEXT.iosNoAddOption,
-          TEXT.iosInstallSteps,
-        )
-      }
-      case "ios-open-safari": {
-        if (dismissed()) return void (root.hidden = true)
-        // No "open in Safari" button: WhatsApp iOS ignores x-safari-https://
-        // (tested on a real iPhone, 2026-10-12), and a dead button is worse
-        // than instructions.
-        return show(TEXT.iosOpenSafari, [button(TEXT.later, dismiss), copyLinkButton(true)], undefined, TEXT.iosOpenSafariSteps)
-      }
-      case "error":
-        return show(
-          // "fcm" = the browser could not reach its push service (e.g. a
-          // de-Googled Chromium such as Helium): retrying here will not help.
-          state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error,
-          [button(TEXT.close, () => (root.hidden = true)), button(TEXT.retry, actions.enable, true)],
-          // Shown on the page: after a reopen the console trail is gone.
-          `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
-        )
-      case "unconfigured":
-        // Not a customer-facing condition; visible to operators in the console.
-        console.info("[handoff-push] push is not configured; missing:", state.missing.join(", ") || "-", "invalid:", state.invalid.join(", ") || "-")
-        root.hidden = true
-        return
-      case "cross-origin-room":
-        console.info("[handoff-push] push off: the room iframe is on another origin and is not in PUSH_ROOM_ORIGINS (or its exchange was not seen)")
-        root.hidden = true
-        return
-      case "app-not-enabled":
-        console.info("[handoff-push] push off: this app is not in PUSH_APP_CODES")
-        root.hidden = true
-        return
-      case "unsupported":
-        console.info("[handoff-push] push off: this browser has no Web Push here (needs HTTPS + PushManager)")
-        root.hidden = true
-        return
-      default:
-        root.hidden = true
-    }
+    lastState = state
+    paint(view(state))
   }
 
   function showPasteForm(onToken: (token: string) => void) {
+    hideAll()
     root.replaceChildren()
     const p = document.createElement("p")
     p.textContent = TEXT.pasteIntro
