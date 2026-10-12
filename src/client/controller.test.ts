@@ -115,6 +115,10 @@ describe("detectSupport (synthetic navigator shapes)", () => {
     expect(detectSupport({ ...base, pushManager: false, notification: false, userAgent: "Mozilla/5.0 (Linux; Android 14; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0 Mobile Safari/537.36" })).toBe("android-open-browser"))
   test("Android Instagram in-app browser (app token) is sent to Chrome", () =>
     expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/150 Mobile Safari/537.36 Instagram 300.0" })).toBe("android-open-browser"))
+  test("Android in-app browser with an unrecognised UA (no wv, no app token) but no Push API is sent to Chrome", () =>
+    expect(detectSupport({ ...base, pushManager: false, notification: false, userAgent: "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Mobile Safari/537.36" })).toBe("android-open-browser"))
+  test("Android without push on plain http stays unsupported (no secure context to fix by switching browser)", () =>
+    expect(detectSupport({ ...base, isSecureContext: false, userAgent: "Mozilla/5.0 (Linux; Android 14; K) Chrome/150.0 Mobile Safari/537.36" })).toBe("unsupported"))
   test("Android Chrome (and a Chrome Custom Tab, same UA) is supported", () =>
     expect(detectSupport({ ...base, userAgent: "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Mobile Safari/537.36" })).toBe("supported"))
   test("iOS home-screen app with push", () =>

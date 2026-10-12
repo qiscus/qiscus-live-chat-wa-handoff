@@ -54,7 +54,12 @@ export function detectSupport(p: SupportProbe): SupportState {
   const ios = isIos(p.userAgent, p.maxTouchPoints)
   if (ios && !p.standalone) return isIosInAppBrowser(p.userAgent) ? "ios-open-safari" : "ios-install"
   if (!ios && isAndroidInAppBrowser(p.userAgent)) return "android-open-browser"
-  if (!p.isSecureContext || !p.serviceWorker || !p.pushManager || !p.notification) return "unsupported"
+  const pushCapable = p.isSecureContext && p.serviceWorker && p.pushManager && p.notification
+  // Any Android browser without Web Push is sent to Chrome too: in-app
+  // browsers do not always identify themselves (WhatsApp Android on a real
+  // phone showed no guidance at all, i.e. it fell through to "unsupported").
+  if (!pushCapable && p.isSecureContext && /Android/.test(p.userAgent)) return "android-open-browser"
+  if (!pushCapable) return "unsupported"
   return "supported"
 }
 
