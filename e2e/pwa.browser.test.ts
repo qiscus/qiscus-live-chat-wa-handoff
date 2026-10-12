@@ -270,6 +270,8 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       await page.goto(invite("synthetic-invite-A"))
       await waitPushState(page, "offer")
       expect(upstream.deviceCalls).toEqual([])
+      // the link survives the exchange: a refresh or "open in browser" re-uses it
+      expect(new URL(page.url()).hash).toBe("#t=synthetic-invite-A")
       const session = JSON.parse((await stored(page, SESSION_KEY))!)
       expect(session).toMatchObject({ appId: "synthapp", roomId: "500", user: { email: "customer-a@example.invalid" } })
       const storageDump = await page.evaluate(() => JSON.stringify({ ...localStorage }))
@@ -406,6 +408,52 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       expect(upstream.deviceCalls.map((c) => c.path)).toEqual(["set_user_device_token", "remove_user_device_token"])
       expect(await stored(page, REG_KEY)).toBeNull()
       await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "open in external browser: a fresh browser session re-exchanges the same link and enters the room (deployed host, not localhost)",
+    async () => {
+      upstream.reset()
+      // Serve this Worker under an https host that is not localhost, the way
+      // it is deployed: the token must survive there too, not only on dev hosts.
+      const HOST = "https://handoff.example"
+      const onHost = async (opts: { grant?: boolean }) => {
+        const ctx = await newContext(opts)
+        await ctx.route(`${HOST}/**`, async (r) => {
+          if (new URL(r.request().url()).pathname === "/js/qiscus-sdk.3.2.6.js")
+            return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
+          const res = await r.fetch({ url: r.request().url().replace(HOST, ORIGIN) })
+          await r.fulfill({ response: res })
+        })
+        return ctx
+      }
+      const link = `${HOST}/widget.html?iframeUrl=${encodeURIComponent(HOST)}#t=synthetic-invite-A`
+
+      // in-app browser: first exchange; the link stays in the address bar
+      const inApp = await onHost({ grant: true })
+      const first = await inApp.newPage()
+      await first.goto(link)
+      await first.waitForFunction(() => !!localStorage.getItem("qiscus-handoff:session:v1"))
+      expect(new URL(first.url()).hash).toBe("#t=synthetic-invite-A")
+      const handedOver = first.url()
+      await inApp.close()
+
+      // external browser: no storage, only the URL it was handed
+      const external = await onHost({ grant: true })
+      const page = await external.newPage()
+      await page.goto(handedOver)
+      await page.waitForFunction(() => !!localStorage.getItem("qiscus-handoff:session:v1"))
+      expect(JSON.parse((await stored(page, SESSION_KEY))!)).toMatchObject({ roomId: "500", user: { email: "customer-a@example.invalid" } })
+      expect(new URL(page.url()).hash).toBe("#t=synthetic-invite-A")
+
+      // a plain refresh there re-exchanges again
+      await page.evaluate(() => localStorage.clear())
+      await page.reload()
+      await page.waitForFunction(() => !!localStorage.getItem("qiscus-handoff:session:v1"))
+      expect(new URL(page.url()).hash).toBe("#t=synthetic-invite-A")
+      await external.close()
     },
     60_000,
   )

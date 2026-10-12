@@ -97,12 +97,12 @@
         return null;
       }
 
-      // TEMPORARY, local dev only: QismoFull strips #t= from the address bar
-      // before exchanging it. Put it back on localhost so a hard refresh can
-      // re-exchange the same token (qismo-api answers a reused token within
-      // its session window as "resumed") instead of needing a new invite link.
-      // Deployed hosts keep the strip-the-token behaviour.
-      var isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      // QismoFull strips #t= from the address bar before exchanging it. Put
+      // it back so the same link keeps working: a refresh, or "open in
+      // browser" from an in-app browser (WhatsApp), which starts a new browser
+      // session with no stored login, re-exchanges the token and qismo-api
+      // answers it as "resumed" for as long as the session runs. Once the
+      // session is over the token is refused (session_over) like any old link.
       var initialHash = location.hash;
 
       // Push + resume (public/js/push/handoff-push.js). Optional: if the bundle
@@ -127,7 +127,7 @@
             },
           },
         });
-        if (isLocal && initialHash && !location.hash) {
+        if (initialHash && !location.hash) {
           history.replaceState(null, "", location.pathname + location.search + initialHash);
         }
       }

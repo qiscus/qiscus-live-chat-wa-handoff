@@ -151,8 +151,13 @@ pinned by an old cache. Bump `SHELL_CACHE` only to force old shell copies out.
 
 ### Session resume
 
-The invite token (`#t=`) and the 120-second `identity_token` are single-use and
-are never stored. After the room iframe logs in with the identity token **and**
+The invite token stays in the address bar (`#t=`, a fragment, so it never
+reaches a server): `widget.html` puts it back after QismoFull strips it. A
+refresh, or "open in browser" from WhatsApp's in-app browser (a new browser
+session with no stored login), re-exchanges the same link and qismo-api answers
+`resumed` until the session ends; after that the link is refused
+(`session_over`). Neither the invite token nor the 120-second `identity_token`
+is ever written to storage. After the room iframe logs in with the identity token **and**
 loads the room, it stores the customer's Qiscus SDK login in `localStorage` on
 this origin (`qiscus-handoff:session:v1`, max 48 h, the longest qismo-api
 session window). The standard Qiscus widget keeps the same login there. A
