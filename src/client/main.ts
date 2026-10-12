@@ -170,6 +170,12 @@ const TEXT = {
   error: "Notifikasi belum bisa diaktifkan. Coba lagi nanti.",
   errorBrowser:
     "Notifikasi belum bisa diaktifkan di browser ini. Coba buka link undangan di Google Chrome, Microsoft Edge, Firefox, atau Safari, lalu aktifkan notifikasi di sana.",
+  errorBlocked: "Notifikasi diblokir oleh pemblokir konten/iklan di perangkat ini. Agar bisa aktif:",
+  errorBlockedSteps: [
+    "iPhone/iPad: buka Settings → Safari → Extensions, matikan pemblokir konten (mis. Firefox Focus, AdGuard, 1Blocker).",
+    "Matikan juga VPN atau DNS pemblokir iklan bila ada.",
+    "Tutup Live Chat, buka lagi, lalu ketuk “Coba lagi”.",
+  ],
   retry: "Coba lagi",
   pasteIntro: "Tempel link undangan dari WhatsApp untuk melanjutkan percakapan di aplikasi ini.",
   pastePlaceholder: "https://…",
@@ -392,9 +398,14 @@ function createUi(actions: { enable(): void; disable(): void }) {
         return { text: TEXT.iosOpenSafari, steps: TEXT.iosOpenSafariSteps, buttons: [button(TEXT.later, dismiss), copyLinkButton(true)] }
       case "error":
         return {
-          // "fcm" = the browser could not reach its push service (e.g. a
+          // "googleapis unreachable" = firebase.ts retried and a probe to
+          // Google also failed: a content blocker / DNS filter on the device
+          // (confirmed on an iPhone with Firefox Focus as a Safari blocker).
+          // Other "fcm" = the browser could not reach its push service (e.g. a
           // de-Googled Chromium such as Helium): retrying here will not help.
-          text: state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error,
+          ...(state.reason === "fcm" && state.detail?.includes("googleapis unreachable")
+            ? { text: TEXT.errorBlocked, steps: TEXT.errorBlockedSteps }
+            : { text: state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error }),
           buttons: [button(TEXT.close, hideAll), button(TEXT.retry, actions.enable, true)],
           // Shown on the page: after a reopen the console trail is gone.
           detail: `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,

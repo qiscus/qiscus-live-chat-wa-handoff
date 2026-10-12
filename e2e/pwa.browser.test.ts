@@ -668,6 +668,32 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
+    "enable blocked by a content blocker (googleapis unreachable): steps to turn the blocker off",
+    async () => {
+      upstream.reset()
+      const ctx = await newContext({ grant: true })
+      await ctx.addInitScript(`window.__HANDOFF_PUSH_TEST__.fcm.getToken = async () => {
+        throw Object.assign(new Error('installations (retried, googleapis unreachable) — TypeError: Load failed'), { name: 'PushStageError' });
+      };`)
+      const page = await ctx.newPage()
+      await page.goto(invite("synthetic-invite-A"))
+      await waitPushState(page, "offer")
+      await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+      await waitPushState(page, "error")
+      const notice = page.locator("#handoff-push")
+      const text = await notice.innerText()
+      expect(text).toContain("diblokir oleh pemblokir konten/iklan")
+      expect(text).toContain("Settings → Safari → Extensions")
+      expect(text).not.toContain("Google Chrome, Microsoft Edge")
+      expect(await notice.locator("li").count()).toBe(3)
+      expect(text).toContain("Kode: fcm — PushStageError: installations (retried, googleapis unreachable)")
+      expect(upstream.deviceCalls).toEqual([])
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
     "unconfigured Worker: push stays off and says why in the console",
     async () => {
       await configurePush(false)
