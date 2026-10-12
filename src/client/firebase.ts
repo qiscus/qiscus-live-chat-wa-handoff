@@ -9,6 +9,7 @@
  * firebase-messaging-sw.js is never registered.
  */
 import { type FirebaseApp, getApps, initializeApp } from "firebase/app"
+import { getId, getInstallations } from "firebase/installations"
 import { getMessaging, getToken as fbGetToken, isSupported } from "firebase/messaging"
 import type { ConfiguredPushConfig } from "./controller"
 
@@ -28,8 +29,65 @@ async function messaging(cfg: ConfiguredPushConfig) {
   return getMessaging(app(cfg))
 }
 
+/**
+ * Token minting runs in named stages so a failure on a customer's phone says
+ * WHERE it broke ("installations", "token"), not just Safari's bare
+ * "TypeError: Load failed". A network-level TypeError is retried once (iOS
+ * WebKit drops fetches around app switches and permission prompts); if it
+ * fails again, a no-cors probe tells "googleapis unreachable" (content
+ * blocker, DNS filter, network) apart from a request-specific failure.
+ */
+export class PushStageError extends Error {
+  constructor(
+    readonly stage: string,
+    readonly original: unknown,
+    note = "",
+  ) {
+    super(`${stage}${note ? ` (${note})` : ""} — ${describe(original)}`)
+    this.name = "PushStageError"
+  }
+}
+
+function describe(e: unknown): string {
+  const err = e as { name?: unknown; code?: unknown; message?: unknown } | null
+  const parts = [err?.name, err?.code, err?.message].filter((x): x is string => typeof x === "string" && x.length > 0)
+  return parts.length ? [...new Set(parts)].join(": ") : String(e)
+}
+
+const isNetworkError = (e: unknown) => e instanceof TypeError
+
+const PROBE_URL = "https://firebaseinstallations.googleapis.com/"
+
+async function googleReachable(): Promise<boolean> {
+  try {
+    await fetch(PROBE_URL, { mode: "no-cors", cache: "no-store" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function stage<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (first) {
+    if (!isNetworkError(first)) throw new PushStageError(name, first)
+    await new Promise((r) => setTimeout(r, 1000))
+    try {
+      return await fn()
+    } catch (second) {
+      const note = isNetworkError(second) ? ((await googleReachable()) ? "retried" : "retried, googleapis unreachable") : "retried"
+      throw new PushStageError(name, second, note)
+    }
+  }
+}
+
 export async function getToken(cfg: ConfiguredPushConfig, registration: ServiceWorkerRegistration): Promise<string> {
-  return fbGetToken(await messaging(cfg), { vapidKey: cfg.vapidKey, serviceWorkerRegistration: registration })
+  const m = await stage("messaging", () => messaging(cfg))
+  // Firebase Installation first: same call getToken makes internally, but on
+  // its own so its failure is labelled separately from the FCM registration.
+  await stage("installations", () => getId(getInstallations(app(cfg))))
+  return stage("token", () => fbGetToken(m, { vapidKey: cfg.vapidKey, serviceWorkerRegistration: registration }))
 }
 
 // Revocation deliberately does not use firebase's deleteToken(): without a

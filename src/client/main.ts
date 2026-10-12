@@ -99,7 +99,14 @@ const fcm: Fcm = {
     const seam = testSeamGetToken()
     if (seam) return seam(cfg)
     const path: string = FIREBASE_MODULE // non-literal: loaded at runtime, not bundled here
-    const mod = (await import(path)) as { getToken(c: ConfiguredPushConfig, r: ServiceWorkerRegistration): Promise<string> }
+    let mod: { getToken(c: ConfiguredPushConfig, r: ServiceWorkerRegistration): Promise<string> }
+    try {
+      mod = await import(path)
+    } catch (e) {
+      // Name the stage: Safari reports a failed module load as a bare TypeError.
+      const err = e as { name?: string; message?: string }
+      throw new Error(`module ${path} — ${err?.name || "Error"}: ${err?.message || String(e)}`)
+    }
     return mod.getToken(cfg, reg)
   },
   async deleteToken() {
