@@ -92,7 +92,7 @@ customer clicks "Aktifkan notifikasi" (explicit opt-in, top page)
 agent replies in the Omnichannel dashboard
   -> qiscus-sdk-api post_comment -> sendPN() -> Flash POST /v1/pn/room
   -> FCM -> browser push service -> /sw.js "push" event
-  -> generic notification ("Ada balasan baru dari agen…"), click opens /widget.html
+  -> notification "Live Chat" with the agent's message as body, click opens /widget.html
 ```
 
 - `device_platform: "web"` (ClientPlatformWeb = 5) is accepted by qiscus-sdk-api
@@ -203,8 +203,11 @@ is put in a URL, the manifest or a cache.
   upstream rejects it on resume, the customer is asked for a new link.
 - Whether Flash removes FCM tokens that come back `UNREGISTERED` is not visible
   from here. The page removes its own registration on every teardown path.
-- Notification content is deliberately generic, with no message text on the
-  lock screen.
+- The notification body is the agent's message as plain text (whitespace
+  collapsed, cut to 120 characters with "…", no agent name); attachments show
+  "Mengirim gambar" / "Mengirim file"; an empty or unreadable payload falls back
+  to "Ada balasan baru dari agen…". The message text is therefore visible on
+  the lock screen.
 
 ### Testing limits
 

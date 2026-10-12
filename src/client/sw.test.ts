@@ -57,16 +57,52 @@ beforeEach(async () => {
 })
 
 describe("sw.js push handling (synthetic)", () => {
-  test("agent reply in the handoff room -> one generic notification, no message content", async () => {
+  test("agent reply in the handoff room -> one notification whose body is the message, no agent name", async () => {
     await withContext(CTX)
     await push(fcmEnvelope(agentReply()))
     expect(visible()).toHaveLength(1)
     const n = visible()[0]!
     expect(n.title).toBe("Live Chat")
-    expect(n.options.body).toBe("Ada balasan baru dari agen. Ketuk untuk membuka percakapan.")
-    expect(JSON.stringify(n)).not.toContain("Synthetic secret")
+    expect(n.options.body).toBe("Synthetic secret order details")
+    expect(JSON.stringify(n)).not.toContain("Synthetic Agent")
     expect(n.options.tag).toBe("handoff-500-9001")
     expect(n.options.renotify).toBe(false)
+  })
+
+  test("long or multi-line messages are collapsed and cut to 120 characters with an ellipsis", async () => {
+    await withContext(CTX)
+    await push(fcmEnvelope(agentReply({ message: "Halo\n\n  kak,   " + "a".repeat(200) })))
+    const body = visible()[0]!.options.body as string
+    expect(Array.from(body)).toHaveLength(120)
+    expect(body.startsWith("Halo kak, aaa")).toBe(true)
+    expect(body.endsWith("…")).toBe(true)
+  })
+
+  test("the cut never splits an emoji", async () => {
+    await withContext(CTX)
+    await push(fcmEnvelope(agentReply({ message: "😀".repeat(130) })))
+    const body = visible()[0]!.options.body as string
+    expect(body).toBe("😀".repeat(119) + "…")
+  })
+
+  test("attachments become a label instead of a URL", async () => {
+    await withContext(CTX)
+    await push(fcmEnvelope(agentReply({ id: 1, type: "file_attachment", message: "", payload: { url: "https://cdn.example/a/photo.JPG?x=1" } })))
+    await push(fcmEnvelope(agentReply({ id: 2, type: "file_attachment", message: "", payload: { url: "https://cdn.example/a/invoice.pdf" } })))
+    await push(fcmEnvelope(agentReply({ id: 3, message: "[file] https://cdn.example/b/pic.png [/file]" })))
+    await push(fcmEnvelope(agentReply({ id: 4, message: "[file] https://cdn.example/b/doc.xlsx [/file]" })))
+    expect(visible().map((n) => n.options.body)).toEqual(["Mengirim gambar", "Mengirim file", "Mengirim gambar", "Mengirim file"])
+    expect(JSON.stringify(visible())).not.toContain("cdn.example")
+  })
+
+  test("an empty or non-text message falls back to the generic body", async () => {
+    await withContext(CTX)
+    await push(fcmEnvelope(agentReply({ id: 1, message: "   \n " })))
+    await push(fcmEnvelope(agentReply({ id: 2, message: undefined })))
+    expect(visible().map((n) => n.options.body)).toEqual([
+      "Ada balasan baru dari agen. Ketuk untuk membuka percakapan.",
+      "Ada balasan baru dari agen. Ketuk untuk membuka percakapan.",
+    ])
   })
 
   test("the same message delivered twice (N FCM credentials) shows once", async () => {
@@ -148,7 +184,7 @@ describe("sw.js push handling (synthetic)", () => {
     await withContext(CTX)
     await push({
       notification: { title: "Evil title", body: "Evil body", icon: "https://evil.example/x.png", click_action: "https://evil.example" },
-      data: { qiscus_room_id: "500", url: "https://evil.example", payload: JSON.stringify(agentReply({ id: "<script>" })) },
+      data: { qiscus_room_id: "500", url: "https://evil.example", payload: JSON.stringify(agentReply({ id: "<script>", username: "Evil Agent" })) },
     })
     const n = visible()[0]!
     const dump = JSON.stringify(n)

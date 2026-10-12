@@ -329,7 +329,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       await settle()
       const shown = await notifications()
       expect(shown).toEqual([
-        { title: "Live Chat", body: "Ada balasan baru dari agen. Ketuk untuk membuka percakapan.", tag: "handoff-500-1" },
+        { title: "Live Chat", body: "secret", tag: "handoff-500-1" },
       ])
 
       // 4. resume (notification click / relaunch target), no invite in URL

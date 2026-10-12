@@ -8,9 +8,10 @@
  * What it announces: a message in THE handoff room that is not the customer's
  * own and not a system event. The customer's SDK user is the same one the
  * WhatsApp room uses, so pushes for other rooms are expected and dropped.
- * The notification is generic (no message text on a lock screen) and its click
- * target is a fixed same-origin URL — nothing from the payload is ever used
- * for display or navigation.
+ * The notification body is a plain-text preview of the agent's message (at most
+ * PREVIEW_MAX characters; attachments become "Mengirim gambar/file"; no agent
+ * name). Title, icon and click target are fixed: nothing else from the payload
+ * is ever used for display or navigation.
  *
  * Caching: only the static shell below, and only as an OFFLINE fallback: every
  * shell request goes to the network first and refreshes the cached copy, so a
@@ -28,6 +29,8 @@
 
 const TITLE = "Live Chat"
 const BODY = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
+const PREVIEW_MAX = 120
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)(\?|#|$)/i
 const ICON = "/img/pwa/icon-192.png"
 const BADGE = "/img/pwa/badge-96.png"
 const RESUME_PATH = "/widget.html"
@@ -108,7 +111,7 @@ function digits(value) {
   return /^\d{1,20}$/.test(s) ? s : null
 }
 
-/** Only the fields the decision needs; display never uses payload text. */
+/** The fields the decision needs, plus the message preview for the body. */
 function extract(raw) {
   const data = asObject(raw && raw.data)
   const inner = asObject(data.payload !== undefined ? data.payload : raw && raw.payload)
@@ -117,7 +120,28 @@ function extract(raw) {
     commentId: digits(inner.id) || digits(inner.id_str),
     type: typeof inner.type === "string" ? inner.type : null,
     email: typeof inner.email === "string" ? inner.email : null,
+    preview: preview(inner),
   }
+}
+
+function attachmentLabel(url) {
+  return IMAGE_EXT.test(String(url || "")) ? "Mengirim gambar" : "Mengirim file"
+}
+
+/**
+ * Plain-text preview of an agent comment, or null (-> generic BODY).
+ * Notification bodies are rendered as text by the browser, never as HTML.
+ */
+function preview(comment) {
+  const extra = asObject(comment.payload)
+  if (comment.type === "file_attachment") return attachmentLabel(extra.url)
+  if (typeof comment.message !== "string") return null
+  const file = /^\s*\[file\]\s*(\S+)\s*\[\/file\]\s*$/i.exec(comment.message) // legacy SDK attachment text
+  if (file) return attachmentLabel(file[1])
+  const text = comment.message.replace(/\s+/g, " ").trim()
+  if (!text) return null
+  const chars = Array.from(text) // do not cut an emoji / surrogate pair in half
+  return chars.length > PREVIEW_MAX ? chars.slice(0, PREVIEW_MAX - 1).join("").trimEnd() + "…" : text
 }
 
 function shouldAnnounce(c, ctx) {
@@ -150,7 +174,7 @@ async function handlePush(raw) {
     const existing = await self.registration.getNotifications({ tag })
     if (existing.length) return // same message via another FCM credential
     await self.registration.showNotification(TITLE, {
-      body: BODY,
+      body: c.preview || BODY,
       icon: ICON,
       badge: BADGE,
       tag,
