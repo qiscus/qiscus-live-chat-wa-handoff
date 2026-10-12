@@ -608,6 +608,49 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
   let crossOriginAdopted = false
   if (iframeOrigin !== location.origin) observeExchange((c) => (exchange = c))
 
+  // Apps in PUSH_APP_CODES get OUR copy of the room even on a first invite,
+  // so push guidance can be a local-only bubble inside the chat (a
+  // cross-origin room can only get the floating banner). QismoFull learns the
+  // app code from the exchange and appends the room iframe at once; we move
+  // that iframe to this origin with the same path and query (our room page
+  // reads the same parameters). Until the config is known the frame is held
+  // on about:blank, so the remote room never starts and never spends the
+  // single-use identity token.
+  let roomSwap: Promise<boolean> | null = null
+  if (iframeOrigin && iframeOrigin !== location.origin) {
+    const cfgReady = loadConfig().catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] }))
+    const swap = async (frame: HTMLIFrameElement): Promise<boolean> => {
+      let url: URL
+      try {
+        url = new URL(frame.src)
+      } catch {
+        return false
+      }
+      const m = /^\/iframes\/v5\/([^/]+)\/live-handover-room$/.exec(url.pathname)
+      if (url.origin !== iframeOrigin || !m) return false
+      const original = frame.src
+      frame.src = "about:blank"
+      const cfg = await cfgReady
+      const app = decodeURIComponent(m[1]!)
+      const ours = cfg.status === "configured" && !!cfg.appCodes && cfg.appCodes.includes(app)
+      frame.src = ours ? location.origin + url.pathname + url.search : original
+      debug("room iframe", ours ? "moved to this origin (app in PUSH_APP_CODES)" : "kept on " + iframeOrigin)
+      return ours
+    }
+    const watch = new MutationObserver((records) => {
+      for (const r of records)
+        for (const n of r.addedNodes)
+          if (n instanceof HTMLIFrameElement && n.id === IFRAME_ID && !roomSwap) {
+            roomSwap = swap(n)
+            watch.disconnect()
+            return
+          }
+    })
+    const observe = () => watch.observe(document.body, { childList: true })
+    if (document.body) observe()
+    else document.addEventListener("DOMContentLoaded", observe)
+  }
+
   window.addEventListener("message", (e: MessageEvent) => {
     const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
     if (!frame || e.source !== frame.contentWindow) return
@@ -640,7 +683,12 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
       // QismoFull announces handoff-ready from its own XHR onload, which runs
       // BEFORE our load listener on that same request: wait one task so the
       // exchange response has been read.
-      setTimeout(() => {
+      setTimeout(async () => {
+        if (roomSwap && (await roomSwap)) {
+          // Our own room now: it hands over the session itself (session-ready).
+          exchange = null
+          return void debug("handoff ready (room moved to this origin)")
+        }
         debug("handoff ready (cross-origin room)", { exchangeSeen: !!exchange })
         // A room on another origin cannot hand its SDK login to this page; the
         // exchange the page saw can, when that origin is allowed (TEMPORARY).

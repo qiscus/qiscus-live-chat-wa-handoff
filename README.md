@@ -200,7 +200,12 @@ is put in a URL, the manifest or a cache.
   Anda". It is plain DOM in this browser: never sent with `sendComment`, never
   stored in Omnichannel, invisible to the agent. With a cross-origin room
   (`omnichannel.qiscus.com`) the page cannot touch the frame, so the same
-  content is shown as a floating banner instead.
+  content is shown as a floating banner instead. For apps in
+  `PUSH_APP_CODES` the page moves a first invite's room from the default
+  `omnichannel.qiscus.com` to this origin (same path and query; the remote
+  frame is held on `about:blank` until `/push/config` answers, so it never
+  spends the identity token), so the bubble also shows on the first visit,
+  e.g. in WhatsApp's in-app browser. Other apps keep the remote room.
 - **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+), and
   "Add to Home Screen" exists only in Safari's share sheet, never in an in-app
   browser such as WhatsApp's. So:

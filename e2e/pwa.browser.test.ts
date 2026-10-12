@@ -611,6 +611,81 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
+    "first invite, default (remote) room, app in PUSH_APP_CODES: room moves to this origin and guidance is a bubble",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "synthapp" })
+      try {
+        upstream.reset()
+        const ctx = await newContext({ grant: true, roomList: true })
+        let remoteHits = 0
+        await ctx.route("https://omnichannel.qiscus.com/**", (r) => {
+          remoteHits++
+          return r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM })
+        })
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A", false))
+        await waitPushState(page, "offer")
+        const src = await page.locator("#qcw-iframe").getAttribute("src")
+        expect(new URL(src!).origin).toBe(ORIGIN)
+        expect(new URL(src!).pathname).toBe("/iframes/v5/synthapp/live-handover-room")
+        expect(remoteHits).toBe(0)
+        const room = page.frameLocator("#qcw-iframe")
+        await room.locator("#handoff-bubble").waitFor()
+        expect(await page.locator("#handoff-push").isHidden()).toBe(true)
+        await room.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(upstream.deviceCalls).toHaveLength(1)
+        await ctx.close()
+      } finally {
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "first invite, default room, app NOT in PUSH_APP_CODES: room stays remote",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "otherapp" })
+      try {
+        const ctx = await newContext({ grant: true })
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A", false))
+        await page.waitForFunction(() => /omnichannel\.qiscus\.com/.test(document.getElementById("qcw-iframe")?.getAttribute("src") || ""), null, { timeout: 15_000 })
+        await waitPushState(page, "cross-origin-room")
+        await ctx.close()
+      } finally {
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "WhatsApp in-app browser, first invite with the default room (Weaper-style app in PUSH_APP_CODES): Safari steps as a bubble",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "synthapp" })
+      try {
+        const ctx = await onHttpsHost({
+          roomList: true,
+          userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.25.1",
+        })
+        const page = await ctx.newPage()
+        await page.goto(`${HOST}/widget.html#t=synthetic-invite-A`)
+        await waitPushState(page, "ios-open-safari")
+        const bubble = page.frameLocator("#qcw-iframe").locator("#handoff-bubble")
+        await bubble.waitFor()
+        expect(await bubble.innerText()).toContain("Safari")
+        expect(await page.locator("#handoff-push").isHidden()).toBe(true)
+        await ctx.close()
+      } finally {
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
     "cross-origin room in PUSH_ROOM_ORIGINS: the page verifies the exchange itself, offers, registers",
     async () => {
       await configurePush(true, { PUSH_ROOM_ORIGINS: "https://omnichannel.qiscus.com" })
