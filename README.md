@@ -206,6 +206,12 @@ is put in a URL, the manifest or a cache.
   frame is held on `about:blank` until `/push/config` answers, so it never
   spends the identity token), so the bubble also shows on the first visit,
   e.g. in WhatsApp's in-app browser. Other apps keep the remote room.
+- **Android in-app browsers** (WhatsApp/Instagram/Facebook WebView, UA
+  `; wv)` or an app token) have no Web Push: the bubble tells the customer to
+  open the link in Chrome (menu ⋮ → open in Chrome, or "Salin link"). There is
+  no `intent://` button: the invite token is in the URL fragment, which an
+  intent URL cannot carry. Chrome itself (and a Chrome Custom Tab) gets the
+  normal "Aktifkan notifikasi" offer; no install is needed on Android.
 - **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+), and
   "Add to Home Screen" exists only in Safari's share sheet, never in an in-app
   browser such as WhatsApp's. So:

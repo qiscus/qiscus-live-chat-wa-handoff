@@ -6,8 +6,13 @@
  * dead button. Inside an in-app browser (WhatsApp, Instagram, ...) the share
  * sheet has no "Add to Home Screen" at all, so that case is sent to Safari
  * first ("ios-open-safari").
+ *
+ * Android: Web Push works in Chrome/Edge/Firefox/Samsung Internet without
+ * installing, but not in an app's embedded WebView (WhatsApp, Instagram, ...),
+ * which has no Push API. That case is sent to Chrome ("android-open-browser").
+ * A Chrome Custom Tab carries Chrome's normal UA and stays "supported".
  */
-export type SupportState = "supported" | "unsupported" | "ios-install" | "ios-open-safari"
+export type SupportState = "supported" | "unsupported" | "ios-install" | "ios-open-safari" | "android-open-browser"
 
 export interface SupportProbe {
   isSecureContext: boolean
@@ -37,9 +42,18 @@ export function isIosInAppBrowser(userAgent: string): boolean {
   return IN_APP_TOKENS.test(userAgent) || !/Safari\//.test(userAgent)
 }
 
+/**
+ * Android in-app browser, by user agent: the WebView marker "; wv)" or an app
+ * token. Push never works there, even if a WebView exposes the API objects.
+ */
+export function isAndroidInAppBrowser(userAgent: string): boolean {
+  return /Android/.test(userAgent) && (/; wv\)/.test(userAgent) || IN_APP_TOKENS.test(userAgent))
+}
+
 export function detectSupport(p: SupportProbe): SupportState {
   const ios = isIos(p.userAgent, p.maxTouchPoints)
   if (ios && !p.standalone) return isIosInAppBrowser(p.userAgent) ? "ios-open-safari" : "ios-install"
+  if (!ios && isAndroidInAppBrowser(p.userAgent)) return "android-open-browser"
   if (!p.isSecureContext || !p.serviceWorker || !p.pushManager || !p.notification) return "unsupported"
   return "supported"
 }

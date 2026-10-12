@@ -109,8 +109,14 @@ describe("detectSupport (synthetic navigator shapes)", () => {
     expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.25.1" })).toBe("ios-open-safari"))
   test("iPhone embedded WKWebView without the Safari/ token is sent to Safari first", () =>
     expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148" })).toBe("ios-open-safari"))
-  test("Android in-app browsers are not affected", () =>
-    expect(detectSupport({ ...base, userAgent: "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/150 Mobile WhatsApp/2.25" })).toBe("supported"))
+  test("Android WhatsApp WebView is sent to Chrome, even if it exposes the Push API objects", () =>
+    expect(detectSupport({ ...base, userAgent: "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/150 Mobile WhatsApp/2.25" })).toBe("android-open-browser"))
+  test("Android WebView without push objects is sent to Chrome (not 'unsupported')", () =>
+    expect(detectSupport({ ...base, pushManager: false, notification: false, userAgent: "Mozilla/5.0 (Linux; Android 14; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0 Mobile Safari/537.36" })).toBe("android-open-browser"))
+  test("Android Instagram in-app browser (app token) is sent to Chrome", () =>
+    expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/150 Mobile Safari/537.36 Instagram 300.0" })).toBe("android-open-browser"))
+  test("Android Chrome (and a Chrome Custom Tab, same UA) is supported", () =>
+    expect(detectSupport({ ...base, userAgent: "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0 Mobile Safari/537.36" })).toBe("supported"))
   test("iOS home-screen app with push", () =>
     expect(detectSupport({ ...base, standalone: true, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" })).toBe("supported"))
   test("old iOS home-screen app without push", () =>
@@ -134,7 +140,7 @@ describe("PushController (synthetic)", () => {
   })
 
   test("unsupported / iOS-install states", async () => {
-    for (const support of ["unsupported", "ios-install", "ios-open-safari"] as const) {
+    for (const support of ["unsupported", "ios-install", "ios-open-safari", "android-open-browser"] as const) {
       const h = harness({ support })
       h.login("app1", "11", "c1@example.invalid")
       await h.ctl.sessionReady()

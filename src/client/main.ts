@@ -163,6 +163,12 @@ const TEXT = {
     "Atau ketuk “Salin link”, buka Safari, lalu tempel di kolom alamat.",
     "Di Safari, ikuti petunjuk berikutnya untuk menambahkan ke Layar Utama.",
   ],
+  androidOpenBrowser: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu membukanya di Chrome (atau browser lain):",
+  androidOpenBrowserSteps: [
+    "Ketuk menu ⋮ di pojok kanan atas, lalu pilih “Buka di Chrome” / “Buka di browser”.",
+    "Atau ketuk “Salin link”, buka Chrome, lalu tempel di kolom alamat.",
+    "Di Chrome, ketuk “Aktifkan notifikasi”.",
+  ],
   copyLink: "Salin link",
   copied: "Link disalin",
   copyFailed: "Gagal menyalin",
@@ -396,6 +402,12 @@ function createUi(actions: { enable(): void; disable(): void }) {
         // (tested on a real iPhone, 2026-10-12), and a dead button is worse
         // than instructions.
         return { text: TEXT.iosOpenSafari, steps: TEXT.iosOpenSafariSteps, buttons: [button(TEXT.later, dismiss), copyLinkButton(true)] }
+      case "android-open-browser":
+        if (dismissed()) return null
+        // No intent:// "open in Chrome" button: the invite token lives in the
+        // URL fragment, which an intent URL cannot carry, and a dead button is
+        // worse than instructions (same lesson as x-safari on iOS).
+        return { text: TEXT.androidOpenBrowser, steps: TEXT.androidOpenBrowserSteps, buttons: [button(TEXT.later, dismiss), copyLinkButton(true)] }
       case "error":
         return {
           // "googleapis unreachable" = firebase.ts retried and a probe to

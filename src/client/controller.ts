@@ -41,6 +41,7 @@ export type PushUiState =
   | { kind: "unsupported" }
   | { kind: "ios-install" }
   | { kind: "ios-open-safari" }
+  | { kind: "android-open-browser" }
   | { kind: "cross-origin-room" }
   | { kind: "app-not-enabled" }
   | { kind: "offer" }

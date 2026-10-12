@@ -644,6 +644,35 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
+    "Android WhatsApp WebView, first invite (app in PUSH_APP_CODES): open-in-Chrome steps as a bubble",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "synthapp" })
+      try {
+        const ctx = await onHttpsHost({
+          roomList: true,
+          userAgent: "Mozilla/5.0 (Linux; Android 14; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0 Mobile Safari/537.36 WhatsApp/2.25",
+        })
+        const page = await ctx.newPage()
+        await page.goto(`${HOST}/widget.html#t=synthetic-invite-A`)
+        await waitPushState(page, "android-open-browser")
+        const bubble = page.frameLocator("#qcw-iframe").locator("#handoff-bubble")
+        await bubble.waitFor()
+        const text = await bubble.innerText()
+        expect(text).toContain("membukanya di Chrome")
+        expect(text).toContain("Buka di Chrome")
+        expect(text).not.toContain("Safari")
+        expect(await bubble.locator("li").count()).toBe(3)
+        expect(await bubble.getByRole("button", { name: "Salin link" }).count()).toBe(1)
+        expect(await page.locator("#handoff-push").isHidden()).toBe(true)
+        await ctx.close()
+      } finally {
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
     "first invite, default room, app NOT in PUSH_APP_CODES: room stays remote",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "otherapp" })
