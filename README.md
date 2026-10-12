@@ -198,10 +198,11 @@ is put in a URL, the manifest or a cache.
   "Add to Home Screen" exists only in Safari's share sheet, never in an in-app
   browser such as WhatsApp's. So:
   - an in-app browser (UA has an app token such as `WhatsApp`, or lacks
-    `Safari/`) gets "Buka di Safari": an `x-safari-https://` link to this same
-    URL, invite fragment included. That scheme is undocumented; WhatsApp is
-    reported to honour it, other apps may not, so the banner also explains the
-    ⋯ → "Buka di browser" menu and offers "Salin link";
+    `Safari/`) gets instructions: the ⋯ menu → open in Safari/browser, or
+    "Salin link" and paste it into Safari (the copied link keeps the invite
+    fragment). There is no "open in Safari" button: WhatsApp iOS ignores
+    `x-safari-https://` (tested on a real iPhone), and a page cannot leave an
+    in-app WKWebView any other way;
   - a Safari tab gets numbered steps: copy the link, add to Home Screen, open
     the app and tap "Tempel";
   - the Home Screen app does not share storage with Safari, so it offers a

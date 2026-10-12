@@ -125,8 +125,8 @@ const STYLE = `
 #handoff-push[hidden]{display:none}
 #handoff-push p{margin:0 0 8px}
 #handoff-push .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-#handoff-push button,#handoff-push a.btn{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f;text-decoration:none}
-#handoff-push button.primary,#handoff-push a.btn.primary{background:#27b199;color:#fff}
+#handoff-push button{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f}
+#handoff-push button.primary{background:#27b199;color:#fff}
 #handoff-push ol{margin:0 0 8px;padding-left:20px}
 #handoff-push .detail{margin:0 0 8px;font-size:12px;color:#6b7280;word-break:break-word}
 #handoff-push input{font:inherit;width:100%;box-sizing:border-box;padding:8px;margin:0 0 8px;border:1px solid #cfd4dc;border-radius:8px}
@@ -149,10 +149,11 @@ const TEXT = {
     "Buka Live Chat dari Layar Utama, lalu ketuk “Tempel”.",
   ],
   iosNoAddOption: "Tidak ada pilihan “Tambah ke Layar Utama”? Buka halaman ini di Safari dulu.",
-  iosOpenSafari:
-    "Untuk menerima notifikasi, Live Chat perlu dipasang di Layar Utama, dan itu hanya bisa dari Safari. Ketuk “Buka di Safari”, lalu ikuti petunjuk di sana.",
-  iosOpenSafariDetail: "Jika Safari tidak terbuka: ketuk menu ⋯ lalu “Buka di browser”, atau salin link lalu tempel di Safari.",
-  openSafari: "Buka di Safari",
+  iosOpenSafari: "Untuk menerima notifikasi, pasang Live Chat di Layar Utama. Itu hanya bisa dari Safari:",
+  iosOpenSafariSteps: [
+    "Ketuk menu ⋯ di halaman ini, lalu pilih buka di Safari / browser.",
+    "Atau: ketuk “Salin link”, buka Safari, lalu tempel di kolom alamat.",
+  ],
   copyLink: "Salin link",
   copied: "Link disalin",
   copyFailed: "Gagal menyalin",
@@ -174,19 +175,6 @@ function button(label: string, onClick: () => void, primary = false): HTMLButton
   if (primary) b.className = "primary"
   b.addEventListener("click", onClick)
   return b
-}
-
-function link(label: string, href: string, primary = false): HTMLAnchorElement {
-  const a = document.createElement("a")
-  a.className = primary ? "btn primary" : "btn"
-  a.href = href
-  a.textContent = label
-  return a
-}
-
-/** Ask iOS to open this page in Safari. The invite stays in the fragment. */
-export function safariUrl(href: string): string | null {
-  return /^https:\/\//.test(href) ? `x-safari-${href}` : null
 }
 
 /** Copy this page's link (with the invite fragment) for the Home Screen app's paste form. */
@@ -223,7 +211,7 @@ function createUi(actions: { enable(): void; disable(): void }) {
     root.hidden = true
   }
 
-  function show(text: string, buttons: HTMLElement[], detail?: string, steps?: string[]) {
+  function show(text: string, buttons: HTMLButtonElement[], detail?: string, steps?: string[]) {
     clearTimeout(hideTimer)
     root.replaceChildren()
     const p = document.createElement("p")
@@ -268,22 +256,19 @@ function createUi(actions: { enable(): void; disable(): void }) {
         return show(TEXT.denied, [button(TEXT.close, dismiss)])
       case "ios-install": {
         if (dismissed()) return void (root.hidden = true)
-        const safari = safariUrl(location.href)
         return show(
           TEXT.iosInstall,
-          [button(TEXT.later, dismiss), ...(safari ? [link(TEXT.openSafari, safari)] : []), copyLinkButton(true)],
+          [button(TEXT.later, dismiss), copyLinkButton(true)],
           TEXT.iosNoAddOption,
           TEXT.iosInstallSteps,
         )
       }
       case "ios-open-safari": {
         if (dismissed()) return void (root.hidden = true)
-        const safari = safariUrl(location.href)
-        return show(
-          TEXT.iosOpenSafari,
-          [button(TEXT.later, dismiss), copyLinkButton(), ...(safari ? [link(TEXT.openSafari, safari, true)] : [])],
-          TEXT.iosOpenSafariDetail,
-        )
+        // No "open in Safari" button: WhatsApp iOS ignores x-safari-https://
+        // (tested on a real iPhone, 2026-10-12), and a dead button is worse
+        // than instructions.
+        return show(TEXT.iosOpenSafari, [button(TEXT.later, dismiss), copyLinkButton(true)], undefined, TEXT.iosOpenSafariSteps)
       }
       case "error":
         return show(

@@ -511,14 +511,14 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       await page.goto(hostInvite("synthetic-invite-A"))
       await waitPushState(page, "ios-install")
       expect(await page.locator("#handoff-push").innerText()).toContain("Tambah ke Layar Utama")
-      expect(await page.getByRole("link", { name: "Buka di Safari" }).getAttribute("href")).toBe(`x-safari-${page.url()}`)
+      expect(await page.getByRole("button", { name: "Salin link" }).count()).toBe(1)
       await ctx.close()
     },
     60_000,
   )
 
   test(
-    "iPhone WhatsApp in-app browser: sent to Safari with the invite, link can be copied",
+    "iPhone WhatsApp in-app browser: told to open Safari (no dead x-safari button), link can be copied",
     async () => {
       upstream.reset()
       const ctx = await onHttpsHost({
@@ -528,10 +528,12 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       const page = await ctx.newPage()
       await page.goto(hostInvite("synthetic-invite-A"))
       await waitPushState(page, "ios-open-safari")
-      expect(await page.locator("#handoff-push").innerText()).toContain("Buka di Safari")
-      const href = await page.getByRole("link", { name: "Buka di Safari" }).getAttribute("href")
-      expect(href).toBe(`x-safari-${page.url()}`)
-      expect(href).toContain("#t=synthetic-invite-A")
+      const text = await page.locator("#handoff-push").innerText()
+      expect(text).toContain("Safari")
+      expect(text).toContain("Salin link")
+      // WhatsApp iOS ignores x-safari-https:// (real iPhone): never offer it
+      expect(await page.locator("#handoff-push a").count()).toBe(0)
+      expect(await page.content()).not.toContain("x-safari-")
       await page.getByRole("button", { name: "Salin link" }).click()
       await page.getByRole("button", { name: "Link disalin" }).waitFor()
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url())
