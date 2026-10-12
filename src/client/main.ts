@@ -125,8 +125,9 @@ const STYLE = `
 #handoff-push[hidden]{display:none}
 #handoff-push p{margin:0 0 8px}
 #handoff-push .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-#handoff-push button{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f}
-#handoff-push button.primary{background:#27b199;color:#fff}
+#handoff-push button,#handoff-push a.btn{font:inherit;border:0;border-radius:8px;padding:8px 12px;cursor:pointer;background:#eef0f4;color:#23272f;text-decoration:none}
+#handoff-push button.primary,#handoff-push a.btn.primary{background:#27b199;color:#fff}
+#handoff-push ol{margin:0 0 8px;padding-left:20px}
 #handoff-push .detail{margin:0 0 8px;font-size:12px;color:#6b7280;word-break:break-word}
 #handoff-push input{font:inherit;width:100%;box-sizing:border-box;padding:8px;margin:0 0 8px;border:1px solid #cfd4dc;border-radius:8px}
 `
@@ -141,8 +142,21 @@ const TEXT = {
   off: "Matikan",
   denied:
     "Notifikasi diblokir di browser ini. Jika ingin diberi tahu saat agen membalas, izinkan notifikasi untuk situs ini di pengaturan browser.",
-  iosInstall:
-    "Di iPhone/iPad, notifikasi hanya tersedia setelah halaman ini ditambahkan ke Layar Utama (iOS 16.4+): ketuk tombol Bagikan, lalu “Tambah ke Layar Utama”. Aplikasi di Layar Utama tidak berbagi sesi dengan Safari, jadi setelah membukanya, tempel lagi link undangan dari WhatsApp di sana.",
+  iosInstall: "Pasang Live Chat di Layar Utama agar dapat notifikasi saat agen membalas (iOS 16.4+):",
+  iosInstallSteps: [
+    "Ketuk “Salin link” di bawah.",
+    "Ketuk tombol Bagikan, lalu “Tambah ke Layar Utama” (pastikan “Buka sebagai Web App” aktif).",
+    "Buka Live Chat dari Layar Utama, lalu ketuk “Tempel”.",
+  ],
+  iosNoAddOption: "Tidak ada pilihan “Tambah ke Layar Utama”? Buka halaman ini di Safari dulu.",
+  iosOpenSafari:
+    "Untuk menerima notifikasi, Live Chat perlu dipasang di Layar Utama, dan itu hanya bisa dari Safari. Ketuk “Buka di Safari”, lalu ikuti petunjuk di sana.",
+  iosOpenSafariDetail: "Jika Safari tidak terbuka: ketuk menu ⋯ lalu “Buka di browser”, atau salin link lalu tempel di Safari.",
+  openSafari: "Buka di Safari",
+  copyLink: "Salin link",
+  copied: "Link disalin",
+  copyFailed: "Gagal menyalin",
+  paste: "Tempel",
   error: "Notifikasi belum bisa diaktifkan. Coba lagi nanti.",
   errorBrowser:
     "Notifikasi belum bisa diaktifkan di browser ini. Coba buka link undangan di Google Chrome, Microsoft Edge, Firefox, atau Safari, lalu aktifkan notifikasi di sana.",
@@ -159,6 +173,35 @@ function button(label: string, onClick: () => void, primary = false): HTMLButton
   b.textContent = label
   if (primary) b.className = "primary"
   b.addEventListener("click", onClick)
+  return b
+}
+
+function link(label: string, href: string, primary = false): HTMLAnchorElement {
+  const a = document.createElement("a")
+  a.className = primary ? "btn primary" : "btn"
+  a.href = href
+  a.textContent = label
+  return a
+}
+
+/** Ask iOS to open this page in Safari. The invite stays in the fragment. */
+export function safariUrl(href: string): string | null {
+  return /^https:\/\//.test(href) ? `x-safari-${href}` : null
+}
+
+/** Copy this page's link (with the invite fragment) for the Home Screen app's paste form. */
+function copyLinkButton(primary = false): HTMLButtonElement {
+  const b = button(TEXT.copyLink, () => {
+    const done = (ok: boolean) => {
+      b.textContent = ok ? TEXT.copied : TEXT.copyFailed
+      setTimeout(() => (b.textContent = TEXT.copyLink), 2500)
+    }
+    if (!navigator.clipboard?.writeText) return done(false)
+    navigator.clipboard.writeText(location.href).then(
+      () => done(true),
+      () => done(false),
+    )
+  }, primary)
   return b
 }
 
@@ -180,12 +223,21 @@ function createUi(actions: { enable(): void; disable(): void }) {
     root.hidden = true
   }
 
-  function show(text: string, buttons: HTMLButtonElement[], detail?: string) {
+  function show(text: string, buttons: HTMLElement[], detail?: string, steps?: string[]) {
     clearTimeout(hideTimer)
     root.replaceChildren()
     const p = document.createElement("p")
     p.textContent = text
     root.appendChild(p)
+    if (steps) {
+      const ol = document.createElement("ol")
+      for (const step of steps) {
+        const li = document.createElement("li")
+        li.textContent = step
+        ol.appendChild(li)
+      }
+      root.appendChild(ol)
+    }
     if (detail) {
       const d = document.createElement("p")
       d.className = "detail"
@@ -214,9 +266,25 @@ function createUi(actions: { enable(): void; disable(): void }) {
       case "denied":
         if (dismissed()) return void (root.hidden = true)
         return show(TEXT.denied, [button(TEXT.close, dismiss)])
-      case "ios-install":
+      case "ios-install": {
         if (dismissed()) return void (root.hidden = true)
-        return show(TEXT.iosInstall, [button(TEXT.close, dismiss)])
+        const safari = safariUrl(location.href)
+        return show(
+          TEXT.iosInstall,
+          [button(TEXT.later, dismiss), ...(safari ? [link(TEXT.openSafari, safari)] : []), copyLinkButton(true)],
+          TEXT.iosNoAddOption,
+          TEXT.iosInstallSteps,
+        )
+      }
+      case "ios-open-safari": {
+        if (dismissed()) return void (root.hidden = true)
+        const safari = safariUrl(location.href)
+        return show(
+          TEXT.iosOpenSafari,
+          [button(TEXT.later, dismiss), copyLinkButton(), ...(safari ? [link(TEXT.openSafari, safari, true)] : [])],
+          TEXT.iosOpenSafariDetail,
+        )
+      }
       case "error":
         return show(
           // "fcm" = the browser could not reach its push service (e.g. a
@@ -275,6 +343,19 @@ function createUi(actions: { enable(): void; disable(): void }) {
     )
     const row = document.createElement("div")
     row.className = "row"
+    if (navigator.clipboard?.readText) {
+      row.appendChild(
+        button(TEXT.paste, () => {
+          navigator.clipboard.readText().then(
+            (text) => {
+              input.value = text
+              go.click()
+            },
+            () => input.focus(), // refused: the customer can still paste by hand
+          )
+        }),
+      )
+    }
     row.appendChild(go)
     for (const el of [p, input, err, row]) root.appendChild(el)
     root.hidden = false

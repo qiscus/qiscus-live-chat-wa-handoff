@@ -199,6 +199,21 @@ async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: bo
   return ctx
 }
 
+// Serve this Worker under an https host that is not localhost, the way it is
+// deployed (some behaviour, e.g. the Safari hand-off link, is https-only).
+const HOST = "https://handoff.example"
+async function onHttpsHost(opts: Parameters<typeof newContext>[0] = {}): Promise<BrowserContext> {
+  const ctx = await newContext(opts)
+  await ctx.route(`${HOST}/**`, async (r) => {
+    if (new URL(r.request().url()).pathname === "/js/qiscus-sdk.3.2.6.js")
+      return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
+    const res = await r.fetch({ url: r.request().url().replace(HOST, ORIGIN) })
+    await r.fulfill({ response: res })
+  })
+  return ctx
+}
+const hostInvite = (token: string) => `${HOST}/widget.html?iframeUrl=${encodeURIComponent(HOST)}#t=${token}`
+
 const pushState = (page: Page) => page.evaluate(() => document.documentElement.dataset.handoffPush || null)
 async function waitPushState(page: Page, kind: string) {
   await page.waitForFunction((k) => document.documentElement.dataset.handoffPush === k, kind, { timeout: 15_000 })
@@ -416,20 +431,9 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     "open in external browser: a fresh browser session re-exchanges the same link and enters the room (deployed host, not localhost)",
     async () => {
       upstream.reset()
-      // Serve this Worker under an https host that is not localhost, the way
-      // it is deployed: the token must survive there too, not only on dev hosts.
-      const HOST = "https://handoff.example"
-      const onHost = async (opts: { grant?: boolean }) => {
-        const ctx = await newContext(opts)
-        await ctx.route(`${HOST}/**`, async (r) => {
-          if (new URL(r.request().url()).pathname === "/js/qiscus-sdk.3.2.6.js")
-            return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
-          const res = await r.fetch({ url: r.request().url().replace(HOST, ORIGIN) })
-          await r.fulfill({ response: res })
-        })
-        return ctx
-      }
-      const link = `${HOST}/widget.html?iframeUrl=${encodeURIComponent(HOST)}#t=synthetic-invite-A`
+      // The token must survive on a deployed (https, non-localhost) host too.
+      const onHost = onHttpsHost
+      const link = hostInvite("synthetic-invite-A")
 
       // in-app browser: first exchange; the link stays in the address bar
       const inApp = await onHost({ grant: true })
@@ -500,13 +504,38 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   test(
     "iPhone Safari tab: Add to Home Screen guidance instead of a button",
     async () => {
-      const ctx = await newContext({
+      const ctx = await onHttpsHost({
         userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
       })
       const page = await ctx.newPage()
-      await page.goto(invite("synthetic-invite-A"))
+      await page.goto(hostInvite("synthetic-invite-A"))
       await waitPushState(page, "ios-install")
       expect(await page.locator("#handoff-push").innerText()).toContain("Tambah ke Layar Utama")
+      expect(await page.getByRole("link", { name: "Buka di Safari" }).getAttribute("href")).toBe(`x-safari-${page.url()}`)
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "iPhone WhatsApp in-app browser: sent to Safari with the invite, link can be copied",
+    async () => {
+      upstream.reset()
+      const ctx = await onHttpsHost({
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.25.1",
+      })
+      await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: HOST })
+      const page = await ctx.newPage()
+      await page.goto(hostInvite("synthetic-invite-A"))
+      await waitPushState(page, "ios-open-safari")
+      expect(await page.locator("#handoff-push").innerText()).toContain("Buka di Safari")
+      const href = await page.getByRole("link", { name: "Buka di Safari" }).getAttribute("href")
+      expect(href).toBe(`x-safari-${page.url()}`)
+      expect(href).toContain("#t=synthetic-invite-A")
+      await page.getByRole("button", { name: "Salin link" }).click()
+      await page.getByRole("button", { name: "Link disalin" }).waitFor()
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url())
+      expect(upstream.deviceCalls).toEqual([])
       await ctx.close()
     },
     60_000,

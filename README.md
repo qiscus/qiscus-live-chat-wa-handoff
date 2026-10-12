@@ -194,11 +194,21 @@ is put in a URL, the manifest or a cache.
   reports `cross-origin-room`. Intended source of the list: the WA handoff
   **Allowed domains** setting (`frame_ancestors`), which qismo-api exposes only
   to authenticated callers today.
-- **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+). A
-  Safari tab shows Add-to-Home-Screen guidance. The Home Screen app does not
-  share storage with Safari, so it offers a "paste the WhatsApp invite link"
-  form. This relies on qismo-api resuming a reused invite within its session
-  window.
+- **iOS/iPadOS:** Web Push only works in a Home Screen web app (iOS 16.4+), and
+  "Add to Home Screen" exists only in Safari's share sheet, never in an in-app
+  browser such as WhatsApp's. So:
+  - an in-app browser (UA has an app token such as `WhatsApp`, or lacks
+    `Safari/`) gets "Buka di Safari": an `x-safari-https://` link to this same
+    URL, invite fragment included. That scheme is undocumented; WhatsApp is
+    reported to honour it, other apps may not, so the banner also explains the
+    ⋯ → "Buka di browser" menu and offers "Salin link";
+  - a Safari tab gets numbered steps: copy the link, add to Home Screen, open
+    the app and tap "Tempel";
+  - the Home Screen app does not share storage with Safari, so it offers a
+    paste form with a "Tempel" button (clipboard read, falls back to typing).
+  This relies on qismo-api resuming a reused invite within its session window.
+  A Home Screen app cannot capture links on iOS: a WhatsApp invite always
+  opens in WhatsApp/Safari first.
 - The stored SDK login is not refreshed when the SDK rotates its token. If the
   upstream rejects it on resume, the customer is asked for a new link.
 - Whether Flash removes FCM tokens that come back `UNREGISTERED` is not visible

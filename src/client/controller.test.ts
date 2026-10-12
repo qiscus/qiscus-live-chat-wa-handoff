@@ -105,6 +105,12 @@ describe("detectSupport (synthetic navigator shapes)", () => {
     expect(detectSupport({ ...base, pushManager: false, notification: false, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1" })).toBe("ios-install"))
   test("iPadOS desktop UA with touch is iOS", () =>
     expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15", maxTouchPoints: 5 })).toBe("ios-install"))
+  test("iPhone WhatsApp in-app browser (app token) is sent to Safari first", () =>
+    expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.25.1" })).toBe("ios-open-safari"))
+  test("iPhone embedded WKWebView without the Safari/ token is sent to Safari first", () =>
+    expect(detectSupport({ ...base, pushManager: false, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148" })).toBe("ios-open-safari"))
+  test("Android in-app browsers are not affected", () =>
+    expect(detectSupport({ ...base, userAgent: "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/150 Mobile WhatsApp/2.25" })).toBe("supported"))
   test("iOS home-screen app with push", () =>
     expect(detectSupport({ ...base, standalone: true, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" })).toBe("supported"))
   test("old iOS home-screen app without push", () =>
@@ -128,7 +134,7 @@ describe("PushController (synthetic)", () => {
   })
 
   test("unsupported / iOS-install states", async () => {
-    for (const support of ["unsupported", "ios-install"] as const) {
+    for (const support of ["unsupported", "ios-install", "ios-open-safari"] as const) {
       const h = harness({ support })
       h.login("app1", "11", "c1@example.invalid")
       await h.ctl.sessionReady()
