@@ -4,7 +4,7 @@
 // might arrive through FCM's web push envelope. The real Flash/FCM payload has
 // NOT been observed yet — see README "Unverified".
 import { beforeEach, describe, expect, test } from "bun:test"
-import { CTX_DB, CTX_KEY, CTX_STORE, writeSwContext } from "./swContext"
+import { CTX_DB, CTX_KEY, CTX_STORE, ctxKey, writeSwContext } from "./swContext"
 import { loadServiceWorker, type SwHarness } from "./swTesting"
 
 const ORIGIN = "https://handoff.example.invalid"
@@ -295,5 +295,82 @@ describe("page <-> SW context contract", () => {
     expect(SW_SOURCE).toContain(`"${CTX_DB}"`)
     expect(SW_SOURCE).toContain(`"${CTX_STORE}"`)
     expect(SW_SOURCE).toContain(`"${CTX_KEY}"`)
+  })
+})
+
+describe("sw.js per-app scope (synthetic)", () => {
+  const SCOPE = "/a/app2/"
+  const CTX2 = { appId: "app2", roomId: "700", selfEmail: "customer2@example.invalid", resume: "/widget.html?source=notification&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io" }
+  const write = (ctx: Record<string, unknown> | null, scope?: string) => writeSwContext(sw.indexedDB as unknown as IDBFactory, ctx as never, scope)
+  const perApp = () => loadServiceWorker(SW_SOURCE, ORIGIN, SCOPE)
+
+  test("the page's context key is derived from the scope, root keeps the legacy key", () => {
+    expect(ctxKey(undefined)).toBe(CTX_KEY)
+    expect(ctxKey("/")).toBe(CTX_KEY)
+    expect(ctxKey("/a/app2/")).toBe("/a/app2/")
+  })
+
+  test("a per-app worker announces for ITS app's context and ignores the root (other app) context", async () => {
+    sw = await perApp()
+    await write({ appId: "weaper", roomId: "500", selfEmail: "weaper-customer@example.invalid" }) // root = another app
+    await push(fcmEnvelope(agentReply({ room_id: 500 })))
+    expect(visible().filter((n) => n.options.tag?.startsWith("handoff-500"))).toHaveLength(0)
+
+    await write(CTX2, SCOPE)
+    await push(fcmEnvelope(agentReply({ id: 9100, room_id: 700 })))
+    expect(visible().filter((n) => n.options.body === "Synthetic secret order details")).toHaveLength(1)
+    expect(visible().at(-1)!.options.tag).toBe("handoff-700-9100")
+  })
+
+  test("the root worker never reads a per-app context (apps cannot announce through each other)", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN)
+    await write(CTX2, SCOPE)
+    await push(fcmEnvelope(agentReply({ id: 9101, room_id: 700 })))
+    expect(visible().some((n) => n.options.tag === "handoff-700-9101")).toBe(false)
+  })
+
+  test("a context whose app does not match the worker's scope is refused (push off)", async () => {
+    sw = await perApp()
+    await write({ ...CTX2, appId: "otherapp" }, SCOPE) // e.g. a tampered or stale entry
+    await push(fcmEnvelope(agentReply({ id: 9102, room_id: 700 })))
+    expect(visible().some((n) => n.options.tag === "handoff-700-9102")).toBe(false)
+  })
+
+  test("click reopens THAT app's resume URL, which the page stored (never the payload)", async () => {
+    sw = await perApp()
+    await write(CTX2, SCOPE)
+    await push(fcmEnvelope(agentReply({ id: 9103, room_id: 700, message: "hi", url: "https://evil.example", click_action: "https://evil.example" })))
+    const shown = visible().find((n) => n.options.tag === "handoff-700-9103")!
+    expect(shown.options.data).toEqual({ v: 1, resume: CTX2.resume })
+    sw.windows.push({ url: ORIGIN + "/", focused: false, visibilityState: "hidden" })
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: shown.options.data } })
+    expect(sw.opened).toEqual([CTX2.resume])
+  })
+
+  test("a malformed stored resume URL falls back to the fixed default", async () => {
+    for (const bad of ["https://evil.example/widget.html?x=1", "//evil.example/widget.html?x", "/other.html?x=1", "/widget.html?x=1#frag", "javascript:alert(1)"]) {
+      sw = await perApp()
+      await write({ ...CTX2, resume: bad }, SCOPE)
+      await push(fcmEnvelope(agentReply({ id: 9104, room_id: 700 })))
+      const shown = visible().find((n) => n.options.tag === "handoff-700-9104")!
+      expect(shown.options.data).toEqual({ v: 1 })
+      sw.windows.push({ url: ORIGIN + "/", focused: false, visibilityState: "hidden" })
+      await sw.dispatch("notificationclick", { notification: { close() {}, data: shown.options.data } })
+      expect(sw.opened).toEqual(["/widget.html?source=notification"])
+    }
+  })
+
+  test("click data that is not ours (resume smuggled in) is ignored", async () => {
+    sw = await perApp()
+    sw.windows.push({ url: ORIGIN + "/", focused: false, visibilityState: "hidden" })
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: { v: 1, resume: "https://evil.example/widget.html?x=1" } } })
+    expect(sw.opened).toEqual(["/widget.html?source=notification"])
+  })
+
+  test("the root worker's notification data stays exactly as before (Weaper unchanged)", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN)
+    await write(CTX)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()[0]!.options.data).toEqual({ v: 1 })
   })
 })

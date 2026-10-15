@@ -47,6 +47,16 @@ const CTX_DB = "qiscus-handoff-push"
 const CTX_STORE = "ctx"
 const CTX_KEY = "current"
 
+// One worker per scope: the legacy root worker (Worker-env config) and, per app
+// whose Firebase config comes from qismo-api, a worker registered from
+// /a/<app>/sw.js with scope /a/<app>/ (its own push subscription / VAPID key).
+// A per-app worker only ever reads ITS app's context.
+const SCOPE_PATH = new URL(self.registration.scope).pathname
+const SCOPE_APP = (/^\/a\/([A-Za-z0-9_-]{1,64})\/$/.exec(SCOPE_PATH) || [])[1] || null
+const MY_CTX_KEY = SCOPE_APP ? SCOPE_PATH : CTX_KEY
+// The only shape a notification click may reopen (written by our own page).
+const RESUME_OK = /^\/widget\.html\?[A-Za-z0-9_%.~=&:-]*$/
+
 // ------------------------------------------------------------------ context
 
 function loadContext() {
@@ -65,11 +75,13 @@ function loadContext() {
     req.onsuccess = () => {
       const db = req.result
       try {
-        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(CTX_KEY)
+        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(MY_CTX_KEY)
         get.onsuccess = () => {
           db.close()
           const v = get.result
-          resolve(v && typeof v.roomId === "string" && typeof v.selfEmail === "string" ? v : null)
+          const ok = v && typeof v.roomId === "string" && typeof v.selfEmail === "string"
+          // An entry for another app under this scope is stale or tampered: push off.
+          resolve(ok && (!SCOPE_APP || v.appId === SCOPE_APP) ? v : null)
         }
         get.onerror = () => {
           db.close()
@@ -181,7 +193,7 @@ async function handlePush(raw) {
       badge: BADGE,
       tag,
       renotify: false,
-      data: { v: 1 },
+      data: ctx.resume && RESUME_OK.test(ctx.resume) ? { v: 1, resume: ctx.resume } : { v: 1 },
     })
     return
   }
@@ -195,14 +207,15 @@ async function handlePush(raw) {
   shown.forEach((n) => n.close())
 }
 
-async function handleClick() {
+async function handleClick(data) {
+  const resume = data && typeof data.resume === "string" && RESUME_OK.test(data.resume) ? data.resume : RESUME_URL
   const list = await clients.matchAll({ type: "window", includeUncontrolled: true })
   const target = list.find(isChatPage)
   if (target) {
     await target.focus()
     return
   }
-  await clients.openWindow(RESUME_URL)
+  await clients.openWindow(resume)
 }
 
 // ------------------------------------------------------------------ shell cache
@@ -272,5 +285,5 @@ self.addEventListener("push", (event) => {
 })
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
-  event.waitUntil(handleClick())
+  event.waitUntil(handleClick(event.notification.data))
 })

@@ -5,7 +5,8 @@
  * does not pay for Firebase otherwise.
  *
  * Only the public web-app config + VAPID public key are used. The token is
- * minted against OUR service worker (/sw.js); Firebase's own
+ * minted against OUR service worker (/sw.js, or /a/<app>/sw.js for an app whose
+ * config comes from qismo-api: the registration passed in); Firebase's own
  * firebase-messaging-sw.js is never registered.
  */
 import { type FirebaseApp, getApps, initializeApp } from "firebase/app"
@@ -15,18 +16,17 @@ import type { ConfiguredPushConfig } from "./controller"
 
 const APP_NAME = "qiscus-handoff"
 
-function app(cfg: ConfiguredPushConfig): FirebaseApp {
-  const existing = getApps().find((a) => a.name === APP_NAME)
-  if (existing) {
-    const o = existing.options
-    if (o.projectId === cfg.firebase.projectId && o.appId === cfg.firebase.appId) return existing
-  }
-  return initializeApp(cfg.firebase, existing ? `${APP_NAME}-${Date.now()}` : APP_NAME)
+/** One Firebase app per project (apps with different Firebase projects can share this origin over time). */
+export function firebaseApp(cfg: ConfiguredPushConfig): FirebaseApp {
+  const apps = getApps().filter((a) => a.name.startsWith(APP_NAME))
+  const same = apps.find((a) => a.options.projectId === cfg.firebase.projectId && a.options.appId === cfg.firebase.appId)
+  if (same) return same
+  return initializeApp(cfg.firebase, apps.length ? `${APP_NAME}-${Date.now()}` : APP_NAME)
 }
 
 async function messaging(cfg: ConfiguredPushConfig) {
   if (!(await isSupported())) throw new Error("messaging-unsupported")
-  return getMessaging(app(cfg))
+  return getMessaging(firebaseApp(cfg))
 }
 
 /**
@@ -86,7 +86,7 @@ export async function getToken(cfg: ConfiguredPushConfig, registration: ServiceW
   const m = await stage("messaging", () => messaging(cfg))
   // Firebase Installation first: same call getToken makes internally, but on
   // its own so its failure is labelled separately from the FCM registration.
-  await stage("installations", () => getId(getInstallations(app(cfg))))
+  await stage("installations", () => getId(getInstallations(firebaseApp(cfg))))
   return stage("token", () => fbGetToken(m, { vapidKey: cfg.vapidKey, serviceWorkerRegistration: registration }))
 }
 

@@ -75,6 +75,8 @@ export interface SwContext {
   selfEmail: string
   /** Language for generic notification fallbacks; message content itself is never translated. */
   locale?: "en" | "id"
+  /** Same-origin /widget.html URL a notification click reopens (per-app scopes only). */
+  resume?: string
 }
 
 export interface PushDeps {
@@ -84,12 +86,17 @@ export interface PushDeps {
   support(): SupportState
   permission(): NotificationPermission
   requestPermission(): Promise<NotificationPermission>
-  loadConfig(): Promise<PushConfig>
+  /** Config for one app (backend config wins over the Worker env), or the env config when the app is unknown. */
+  loadConfig(appId?: string): Promise<PushConfig>
+  /** The resume URL for this page's backend (see SwContext.resume); only used for per-app scopes. */
+  resumeUrl?(): string | undefined
   fcm: {
     getToken(cfg: ConfiguredPushConfig): Promise<string>
-    deleteToken(cfg: ConfiguredPushConfig): Promise<void>
+    /** `swScope` undefined = the legacy root-scope subscription. */
+    deleteToken(target: { swScope?: string }): Promise<void>
   }
-  swContext: { write(ctx: SwContext | null): Promise<void> }
+  /** `scope` selects whose context is written/cleared (undefined = legacy root). */
+  swContext: { write(ctx: SwContext | null, scope?: string): Promise<void> }
   onState(state: PushUiState): void
   /** Operator debug trail. Never receives a token, an e-mail or message content. */
   debug?(...args: unknown[]): void
@@ -102,12 +109,14 @@ interface Registration {
   userEmail: string
   roomId: string
   at: number
+  /** SW scope holding this subscription; absent = the legacy root scope. */
+  scope?: string
 }
 
 type Creds = Pick<StoredSession, "appId" | "user">
 
 export class PushController {
-  private cfg: PushConfig | null = null
+  private cfgs = new Map<string, PushConfig>()
 
   constructor(private deps: PushDeps) {}
 
@@ -132,7 +141,7 @@ export class PushController {
    * if a same-origin room had stored the session.
    */
   async crossOriginRoom(room?: { origin: string | null; exchange: ExchangeCapture | null }): Promise<void> {
-    const cfg = await this.config()
+    const cfg = await this.config(room?.exchange?.appId)
     const origin = room?.origin ?? null
     const allowed = cfg.status === "configured" && !!origin && cfg.roomOrigins.includes(origin)
     if (!allowed || !room?.exchange) {
@@ -282,7 +291,7 @@ export class PushController {
       this.emit({ kind: "hidden" })
       return null
     }
-    const cfg = await this.config()
+    const cfg = await this.config(session.appId)
     if (cfg.status !== "configured") {
       this.log("push config not usable", { missing: cfg.missing, invalid: cfg.invalid })
       this.emit({ kind: "unconfigured", missing: cfg.missing, invalid: cfg.invalid })
@@ -323,8 +332,29 @@ export class PushController {
         await removeDeviceToken(this.deps.fetch, session, reg.fcmToken)
       }
     }
-    this.saveReg({ v: 1, fcmToken: token, appId: session.appId, userEmail: session.user.email, roomId: session.roomId, at: this.deps.now() })
-    await this.safe(() => this.deps.swContext.write({ appId: session.appId, roomId: session.roomId, selfEmail: session.user.email }))
+    // The registration moved to another service-worker scope (e.g. the backend
+    // started serving config for an app that was on the Worker env): the old
+    // scope's subscription must not keep receiving.
+    if (reg && this.ownedBy(reg, session) && reg.scope !== cfg.swScope) {
+      await this.safe(() => this.deps.fcm.deleteToken({ swScope: reg.scope }))
+      await this.safe(() => this.deps.swContext.write(null, reg.scope))
+    }
+    this.saveReg({
+      v: 1,
+      fcmToken: token,
+      appId: session.appId,
+      userEmail: session.user.email,
+      roomId: session.roomId,
+      at: this.deps.now(),
+      ...(cfg.swScope ? { scope: cfg.swScope } : {}),
+    })
+    const resume = cfg.swScope ? this.deps.resumeUrl?.() : undefined
+    await this.safe(() =>
+      this.deps.swContext.write(
+        { appId: session.appId, roomId: session.roomId, selfEmail: session.user.email, ...(resume ? { resume } : {}) },
+        cfg.swScope,
+      ),
+    )
     return { kind: "enabled" }
   }
 
@@ -344,25 +374,29 @@ export class PushController {
     if (owner && this.ownedBy(reg, owner)) {
       await removeDeviceToken(this.deps.fetch, owner, reg.fcmToken)
     }
-    const cfg = await this.config()
-    if (cfg.status === "configured") await this.safe(() => this.deps.fcm.deleteToken(cfg))
+    // The scope comes from the registration itself, not from a config that may
+    // no longer load (backend down, app since unconfigured).
+    await this.safe(() => this.deps.fcm.deleteToken({ swScope: reg.scope }))
     this.deps.storage.removeItem(REG_KEY)
-    await this.safe(() => this.deps.swContext.write(null))
+    await this.safe(() => this.deps.swContext.write(null, reg.scope))
   }
 
   private ownedBy(reg: Registration, who: Creds): boolean {
     return reg.appId === who.appId && reg.userEmail === who.user.email
   }
 
-  private async config(): Promise<PushConfig> {
-    if (!this.cfg) {
+  private async config(appId?: string): Promise<PushConfig> {
+    const key = appId ?? ""
+    let cfg = this.cfgs.get(key)
+    if (!cfg) {
       try {
-        this.cfg = await this.deps.loadConfig()
+        cfg = await this.deps.loadConfig(appId)
       } catch {
         return { status: "unconfigured", missing: [], invalid: [] }
       }
+      this.cfgs.set(key, cfg)
     }
-    return this.cfg
+    return cfg
   }
 
   private loadReg(): Registration | null {

@@ -79,3 +79,26 @@ describe("existing routes still work (synthetic)", () => {
     expect(await res.text()).toContain("Live Handover Widget")
   })
 })
+
+describe("GET /a/:appCode/sw.js: one service-worker scope per app (synthetic)", () => {
+  test("serves the same worker script under the app's own path, scoped to it and never cached", async () => {
+    const res = await app.request("/a/app-two_9/sw.js", {}, { ASSETS: fakeAssets })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("asset:/sw.js")
+    expect(res.headers.get("service-worker-allowed")).toBe("/a/app-two_9/")
+    expect(res.headers.get("cache-control")).toBe("no-cache")
+    expect(res.headers.get("content-type")).toContain("javascript")
+  })
+
+  test("a malformed app code or any other file under /a/ is a plain 404", async () => {
+    for (const path of ["/a/app%20two/sw.js", `/a/${"x".repeat(65)}/sw.js`, "/a/../sw.js", "/a/app2/other.js", "/a/app2/", "/a//sw.js", "/a/app2/sw.js/x"]) {
+      const res = await app.request(path, {}, { ASSETS: fakeAssets })
+      expect(res.status).toBe(404)
+    }
+  })
+
+  test("a missing underlying asset is not turned into a script", async () => {
+    const missing = { fetch: async () => new Response("nope", { status: 404 }) } as unknown as Fetcher
+    expect((await app.request("/a/app2/sw.js", {}, { ASSETS: missing })).status).toBe(404)
+  })
+})
