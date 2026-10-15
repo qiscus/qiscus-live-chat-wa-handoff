@@ -168,7 +168,11 @@ const SDK_STUB = `(function(){
     sendComment:function(){window.__sentComments=(window.__sentComments||0)+1;}};
   window.QiscusSDK={core:core,render:function(){document.body.setAttribute('data-synthetic-sdk','rendered');
     if(window.__SYNTH_ROOM_LIST__){var c=document.createElement('div');c.className='qcw-comments';c.style.cssText='height:600px;overflow:auto';
-      c.innerHTML='<div class="inner"><ul><li class="qcw-comment">synthetic agent message</li></ul></div>';document.body.appendChild(c);}}};
+      c.innerHTML='<div class="inner"><ul><li class="qcw-comment">synthetic agent message</li></ul></div>';document.body.appendChild(c);}
+    if(window.__SYNTH_SYSTEM_EVENT__){var s=document.createElement('div');s.id='synthetic-thread';
+      s.innerHTML='<div class="qcw-comment-container qcw-comment--system_event" id="se1"><div class="qcw-comment-date"><div>Today</div></div><div class="qcw-comment--system-event"><div>Agent A joined this conversation</div></div><div><!----></div></div>'
+        +'<div class="qcw-comment-container qcw-comment--text" id="c2"><div class="qcw-comment"><div class="qcw-comment__message">synthetic agent reply</div></div></div>';
+      document.body.appendChild(s);}}};
   window.QiscusUI={setCustomColors:function(){}};
 })();`
 
@@ -185,12 +189,14 @@ const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async () => 
   return 'synthetic-fcm-' + (reg.active ? 'sw' : 'nosw') + '-' + 'A'.repeat(120);
 } } };`
 
-async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean } = {}): Promise<BrowserContext> {
+async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean; systemEvent?: boolean } = {}): Promise<BrowserContext> {
   const ctx = await browser.newContext({ userAgent: opts.userAgent })
   if (opts.grant) await ctx.grantPermissions(["notifications"], { origin: ORIGIN })
   await ctx.addInitScript(FCM_SEAM)
   // the SDK stub renders a message list like the real room (.qcw-comments .inner)
   if (opts.roomList) await ctx.addInitScript("window.__SYNTH_ROOM_LIST__ = true")
+  // the SDK stub also renders a system-event line in the real SDK markup
+  if (opts.systemEvent) await ctx.addInitScript("window.__SYNTH_SYSTEM_EVENT__ = true")
   if (opts.deny)
     await ctx.addInitScript(`(() => {
       Object.defineProperty(Notification, 'permission', { get: () => 'denied' });
@@ -512,6 +518,24 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       // never sent as a chat message
       const frame = page.frame({ url: /live-handover-room/ })!
       expect(await frame.evaluate(() => (window as any).__sentComments || 0)).toBe(0)
+      await ctx.close()
+    },
+    60_000,
+  )
+
+  test(
+    "system events are hidden from the customer; messages and their date header stay",
+    async () => {
+      upstream.reset()
+      const ctx = await newContext({ grant: true, systemEvent: true })
+      const page = await ctx.newPage()
+      await page.goto(invite("synthetic-invite-A"))
+      const room = page.frameLocator("#qcw-iframe")
+      await room.locator("#synthetic-thread").waitFor({ state: "attached" })
+      expect(await room.locator(".qcw-comment--system-event").isHidden()).toBe(true)
+      expect(await room.getByText("Agent A joined this conversation").isVisible()).toBe(false)
+      expect(await room.locator("#se1 .qcw-comment-date").isVisible()).toBe(true)
+      expect(await room.getByText("synthetic agent reply").isVisible()).toBe(true)
       await ctx.close()
     },
     60_000,

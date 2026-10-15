@@ -78,6 +78,19 @@
             height: 100%;
         }
 
+        /* A handed-over room should read like the WhatsApp chat it came from, so the
+           SDK's system-event lines (agent joined, room linked, ...) are not shown to
+           the customer. Display only: the events still arrive and newMessagesCallback
+           still acts on them (resolved), and the date header above an event stays. */
+        .qcw-comment--system_event .qcw-comment--system-event {
+            display: none;
+        }
+
+        .qcw-comment-container.qcw-comment--system_event {
+            margin-bottom: 0;
+            border-bottom: 0 !important;
+        }
+
         .qcw-copyright {
             justify-content: center;
             line-height: 32px;
