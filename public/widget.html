@@ -157,7 +157,7 @@
         statusEl.textContent = PESAN.invalid_script;
       } else {
         try {
-          push = window.HandoffPush ? window.HandoffPush.start({ iframeUrl: env.iframeUrl }) : null;
+          push = window.HandoffPush ? window.HandoffPush.start({ iframeUrl: env.iframeUrl, baseUrl: env.baseUrl }) : null;
         } catch (_) {
           push = null;
         }

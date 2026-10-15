@@ -21,6 +21,8 @@
 import { Hono } from "hono"
 import { type PushEnv, readPushConfig } from "./push/config"
 
+const APP_CODE = /^[A-Za-z0-9_-]{1,64}$/
+
 type Bindings = { ASSETS: Fetcher } & PushEnv
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -32,6 +34,29 @@ const app = new Hono<{ Bindings: Bindings }>()
 app.get("/push/config", (c) => {
   c.header("Cache-Control", "no-store")
   return c.json(readPushConfig(c.env))
+})
+
+// Per-app service-worker script. A push subscription is bound to one service
+// worker registration and one VAPID key, so each app whose Firebase config
+// comes from qismo-api registers the same sw.js from its own path, giving it
+// its own scope (/a/<app>/) and subscription. The path alone limits the scope;
+// Service-Worker-Allowed is stated explicitly. Never cached, like /sw.js.
+app.get("/a/:appCode/sw.js", async (c) => {
+  const appCode = c.req.param("appCode")
+  if (!APP_CODE.test(appCode)) return c.text("Not found", 404)
+  const url = new URL(c.req.url)
+  url.pathname = "/sw.js"
+  url.search = ""
+  const asset = await c.env.ASSETS.fetch(new Request(url, { method: "GET" }))
+  if (!asset.ok) return c.text("Not found", 404)
+  return new Response(asset.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Service-Worker-Allowed": `/a/${appCode}/`,
+    },
+  })
 })
 
 app.get("/", (c) => {
