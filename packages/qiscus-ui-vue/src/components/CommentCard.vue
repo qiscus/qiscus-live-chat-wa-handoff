@@ -4,7 +4,7 @@
       <div class="loading-image-container"  v-if="isLoading"> 
         <i class="">
           <icon name="ic-load"></icon>
-        </i> Loading Image...
+        </i> {{ $customerText('common.imageLoading') }}
       </div>
       <div class="qcw-image-container" v-if="!isLoading" :style="{'background-image':'url('+imageSource+')'}">
       </div>

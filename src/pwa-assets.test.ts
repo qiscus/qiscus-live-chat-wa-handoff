@@ -78,7 +78,7 @@ describe("served under a path prefix", () => {
 
   test("the room's assets are 3 levels up (<prefix>iframes/v5/<app>/live-handover-room)", async () => {
     const html = await Bun.file(pub("live-handover-room.html")).text()
-    for (const rel of ["css/qiscus-sdk.3.2.12.css", "js/qiscus-sdk.3.2.12.js", "js/third-party/aes.js", "js/push/handoff-room.js"]) {
+    for (const rel of ["css/qiscus-sdk.3.2.13.css", "js/qiscus-sdk.3.2.13.js", "js/third-party/aes.js", "js/push/handoff-room.js"]) {
       expect(html).toContain(`"../../../${rel}"`)
       expect(await Bun.file(pub(rel)).exists()).toBe(true)
     }
