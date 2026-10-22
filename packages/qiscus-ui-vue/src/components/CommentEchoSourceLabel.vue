@@ -20,9 +20,9 @@ export default {
   computed: {
     message() {
       if (this.channel && this.channel.toLowerCase() === 'tiktok') {
-        return { text: 'This message was sent from the Tiktok app.', icon: TIKTOK_ICON };
+        return { text: this.$customerText('echo.tiktok'), icon: TIKTOK_ICON };
       }
-      return { text: 'This message was sent from the WhatsApp app.', icon: WHATSAPP_ICON };
+      return { text: this.$customerText('echo.whatsapp'), icon: WHATSAPP_ICON };
     },
   },
 };

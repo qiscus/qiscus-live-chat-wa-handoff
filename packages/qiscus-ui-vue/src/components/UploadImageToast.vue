@@ -2,19 +2,20 @@
   .qcw-upload-toast__content
     header
       label
-        | Sending to
-        b &nbsp;{{ textEllipsis(upload.room.name, 20)}}
+        | {{ $customerText('common.sendTo', { name: textEllipsis(upload.room.name, 20) }) }}
       .info
         label(v-if="!onUploadComplete") {{`${upload.success + upload.error}/${upload.total}`}}
         .form-icon(v-else @click="handleClose()")
           icon(name="ic-close" :fill="iconStyle")
     section
-      a(v-if="onUploadComplete" href="" @click.prevent="toggleDetails") {{ showDetails ? 'Hide' : 'Show' }} details
+      a(v-if="onUploadComplete" href="" @click.prevent="toggleDetails") {{ $customerText(showDetails ? 'upload.hideDetails' : 'upload.showDetails') }}
       ul(:class="{hide: !showDetails, done: onUploadComplete && showDetails}")
         li(v-for="(data, i) in upload.data" :key="i")
           label(:title="data.file.name") {{ textEllipsis(data.file.name, 25) }}
           span(:class="{err: data.status === 3}") {{ getStatus(data) }}
-      label(v-if="onUploadComplete && upload.error") {{ `${upload.error} media(s) failed to send.` }} Click &nbsp; #[a(href="" @click.prevent="handleSendImages(true)" v-text="' here '")] &nbsp; to try again.
+      label(v-if="onUploadComplete && upload.error")
+        | {{ $customerText('upload.failed', { count: upload.error }) }}
+        a(href="" @click.prevent="handleSendImages(true)") {{ $customerText('upload.retry') }}
 </template>
 
 <script>
@@ -100,16 +101,16 @@ export default {
     getStatus(data) {
       const status = data.status;
       let text = '';
-      if (!status) text = 'On queue';
+      if (!status) text = this.$customerText('upload.onQueue');
       if (status === 1) {
         if (data.progress === 100) {
-          text = 'Sending';
+          text = this.$customerText('upload.sending');
         } else {
-          text = `Uploading ${Math.floor(data.progress)}%`;
+          text = this.$customerText('upload.progress', { progress: Math.floor(data.progress) });
         }
       }
-      if (status === 2) text = 'Success';
-      if (status === 3) text = 'Failed';
+      if (status === 2) text = this.$customerText('upload.success');
+      if (status === 3) text = this.$customerText('upload.failedStatus');
 
       return text;
     },

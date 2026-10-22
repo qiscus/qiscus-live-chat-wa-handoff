@@ -1,16 +1,14 @@
 <template>
   <div class="image-loader">
     <div v-if="isBlacklistedFiles" class="image-loader--text">
-      Sorry, {{ filename }} can’t open because the .{{ ext }} not permitted and
-      temporary blocked. To view this file, the file type must be whitelisted.
-      Please contact your Administrator to more information!
+      {{ $customerText('file.blocked', { filename: filename, ext: ext }) }}
     </div>
     <div v-else>
       <div class="loading-image-container" v-show="isLoading">
         <i>
           <icon name="ic-load"></icon>
         </i>
-        <span class="label">Loading Image...</span>
+        <span class="label">{{ $customerText('common.imageLoading') }}</span>
       </div>
       <div v-show="isImage && !isLoading && error == ''" class="qcw-image-container" @click="clickImageHandler">
         <img ref="imageContainer" :src="imageSrc" :alt="uri" @error="imageFallback" @load="imageLoaded" />
@@ -23,7 +21,7 @@
           {{ error }}
         </p>
         <button @click="loadImage" class="reload-image-btn">
-          Reload Image
+          {{ $customerText('common.imageReload') }}
         </button>
       </div>
       <div v-show="!isImage && !isLoading" class="qcw-file-container">
@@ -154,14 +152,14 @@ export default {
 
       const actions = [
         {
-          text: 'Yes, open it',
+          text: this.$customerText('file.open'),
           onClick: (e, toastObject) => {
             window.open(this.uri);
             toastObject.goAway(0);
           },
         },
         {
-          text: 'Cancel',
+          text: this.$customerText('common.cancel'),
           onClick: (e, toastObject) => {
             toastObject.goAway(0);
             return false;
@@ -170,7 +168,7 @@ export default {
       ];
 
       return this.$toasted.show(
-        'Are you sure you want to open this file, make sure the file is trusted?',
+        this.$customerText('file.confirmOpen'),
         { duration: 5000, action: actions },
       );
     },

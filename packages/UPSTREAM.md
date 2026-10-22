@@ -6,7 +6,7 @@ copied here so the handoff widget builds and deploys without MCF.
 
 | Package | Output used here | MCF path | Forked from |
 | --- | --- | --- | --- |
-| `qiscus-ui-vue` 3.2.12 | `public/js/qiscus-sdk.<v>.js(.map)`, `public/css/qiscus-sdk.<v>.css` | `qiscus-ui-vue/` | `e33d0a9a2` (master, 2026-10-22) |
+| `qiscus-ui-vue` 3.2.13 | `public/js/qiscus-sdk.<v>.js(.map)`, `public/css/qiscus-sdk.<v>.css` | `qiscus-ui-vue/` | `e33d0a9a2` (master, 2026-10-22) |
 | `qismo-widget` | `public/js/qismo-full-v5.js(.map)` | `qismo-widget/` | `e33d0a9a2` (master, 2026-10-22) |
 
 At the fork commit, a build of either package here is byte-identical to the
@@ -14,7 +14,7 @@ artefact MCF commits in its own `public/` (`qiscus-sdk.3.2.12.js/.css`,
 `qismo-full-v5.js`).
 
 Removed from the copy: `qiscus-ui-vue/screenshots/` and `qiscus-ui-vue/.claude/`.
-Nothing else was changed.
+Nothing else was changed at the fork commit.
 
 ## Rules
 
@@ -32,4 +32,4 @@ Nothing else was changed.
 | Date | MCF commit | What |
 | --- | --- | --- |
 | 2026-10-22 | `e33d0a9a2` | Initial fork (includes PR #2436, qiscus-sdk 3.2.10–3.2.12, iOS composer fixes). |
-| 2026-10-23 | — | Scrubbed demo credentials versus upstream. Deleted unreferenced `qiscus-ui-vue/indexOLD.html` (SDK `setUser` logins). In the remaining demo pages and docs, replaced `@qiscus.com` user ids, literal user keys, the ads-tracker secret, assistant authorization values, and identity-token samples with placeholders (`user@example.com`, `YOUR_USER_KEY`, `YOUR_SECRET_TOKEN`, `YOUR_AUTHORIZATION`, `YOUR_IDENTITY_TOKEN`). History was not rewritten, so the fork commit still has the old text. |
+| 2026-10-22 | — (uncommitted MCF work, `improvement/live-handover-customer-end-chat-v2` on `1d0f411d2`) | Customer End chat (TC-KL-05) + EN/ID customer locale, qiscus-ui-vue 3.2.13. Never merged in MCF; developed here from now on. Tests that read MCF Blade views now read `public/live-handover-room.html` / `public/widget.html`. |

@@ -86,8 +86,12 @@
         @assistant-result="assistantResultChange"
         :langs="assistant.langs")
 
+      div.qcw-chat-end-error(v-if="customerEndChatFailed" role="alert") {{ $customerText('chat.endFailed') }}
+
+      div.qcw-chat-ended(v-if="customerChatEnded") {{ $customerText('chat.ended') }}
+
       comment-form(:core="core"
-        v-if="core.UI.config.showCommentForm && core.selected"
+        v-if="core.UI.config.showCommentForm && core.selected && !customerChatEnded"
         :repliedComment="repliedComment"
         :showAttachmentForm="showAttachmentForm"
         :toggleAttachmentForm="toggleAttachmentForm"
@@ -173,6 +177,19 @@ export default {
     };
   },
   computed: {
+    // Opt-in (options.customerEndChat, set by the WA -> Live Chat handover
+    // room only): after the customer ended the chat the composer is replaced
+    // by a notice, so nothing more can be sent into a closed session.
+    customerChatEnded() {
+      const options = this.core.options;
+      return !!(options && options.customerEndChat) &&
+        this.core.UI.customerEndChatState === 'ended';
+    },
+    customerEndChatFailed() {
+      const options = this.core.options;
+      return !!(options && options.customerEndChat) &&
+        this.core.UI.customerEndChatState === 'error';
+    },
     showIsTypingStatus() {
       const self = this;
       if (this.core.isTypingStatus) {
@@ -207,7 +224,7 @@ export default {
         .slice(0, limit)
         .map(item => item.username.split(' ')[0]);
       if (this.core.selected.participants.length <= limit)        { return participants.join(', '); }
-      return participants.concat(`and ${overflowCount} others.`).join(', ');
+      return participants.concat(this.$customerText('participants.others', { count: overflowCount })).join(', ');
     },
     isEmailMode() {
       if (!this.core.selected || !('options' in this.core.selected))        { return false; }
@@ -349,7 +366,15 @@ export default {
       // upload is handed off.
       const repliedComment = this.repliedComment || null;
       if (repliedComment) this.closeReply();
-      uploadFile(file, caption, this.core, this.$toasted, null, repliedComment);
+      uploadFile(
+        file,
+        caption,
+        this.core,
+        this.$toasted,
+        null,
+        repliedComment,
+        this.$customerText('upload.fileFailed'),
+      );
       this.showAttachmentForm = false;
     },
     setLanguages(value) {
@@ -479,6 +504,32 @@ export default {
         font-size 12px
         font-weight 400
         line-height 16px
+
+.qcw-end-chat-btn
+  flex 0 0 auto
+  border 1px solid $lightGrey
+  border-radius 16px
+  background $white
+  color $dark
+  font-size 12px
+  font-weight 600
+  line-height 16px
+  padding 6px 12px
+  cursor pointer
+  &:disabled
+    opacity .6
+    cursor default
+
+.qcw-chat-ended,
+.qcw-chat-end-error
+  padding 16px
+  text-align center
+  font-size 14px
+  background $white
+  border-top 0.5px solid $lightGrey
+
+.qcw-chat-end-error
+  color $red
 
 .qcw-comments
   flex 1

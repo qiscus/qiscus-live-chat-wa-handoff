@@ -3,7 +3,7 @@
     .backdrop(@click="handleClose(false)")
     .content
       header
-        h3 Preview
+        h3 {{ $customerText('common.preview') }}
         .form-icon(@click="handleClose(false)")
           icon(name="ic-close" :fill="iconStyle")
       section
@@ -14,7 +14,7 @@
             textarea(
               id="input-upload-caption"
               rows="1"
-              placeholder="Add caption.."
+              :placeholder="$customerText('common.captionShort')"
               v-model="caption"
               @keydown.enter="onSubmit($event)"
               ref="inputUploadCaption"
@@ -29,7 +29,7 @@
               :class="{selected: selected.id == img.id}"
               @click="selectImg(img)"
             )
-        label(title="Add more image")
+        label(:title="$customerText('common.addImage')")
           input(type="file" accept="image/*" multiple ref="addImage" @change="addImage")
           icon(name="ic-image-attachment" :fill="iconStyle" ref="addImageInput")
         label(:title="displayName" @click="handleClose(true)")
@@ -77,7 +77,7 @@ export default {
   },
   computed: {
     displayName() {
-      return `Send to ${this.$core.selected.name}`;
+      return this.$customerText('common.sendTo', { name: this.$core.selected.name });
     },
     iconStyle() {
       return {

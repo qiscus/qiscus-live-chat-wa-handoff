@@ -4,7 +4,7 @@
 
     div(v-if="!isEmailMode" class="box-form")
       div(class="input-form")
-        textarea(placeholder="Send a message ..."
+        textarea(:placeholder="$customerText('composer.placeholder')"
           rows="1"
           id="comment-input"
           :autofocus="!isTouchScreen"
@@ -69,14 +69,14 @@
       .container-email-button
         span(
           v-if="cleanHtml(commentInput).length > 0 || emailAttachments.length > 0"
-          class='qcw-icon' title="Clear all"
+          class='qcw-icon' :title="$customerText('email.clearAll')"
           style="cursor: pointer"
           @click="clearAllMessage()")
           icon(name="ic-trash" fill="#EF7D7C")
         button(
           class="send-button-email"
           :disabled="(cleanHtml(commentInput).length === 0 && emailAttachments.length === 0) || isSendingEmail"
-          @click="sendEmailMessage") Send Now
+          @click="sendEmailMessage") {{ $customerText('email.sendNow') }}
 
     transition(name="backdrop")
       upload-image-form(

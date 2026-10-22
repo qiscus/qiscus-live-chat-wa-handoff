@@ -52,7 +52,7 @@
               v-click-outside="onClickMenuOutside"
               )
               ul(v-if="!comment.isFailed")
-                li(@click="replyHandler(comment)") Reply
+                li(@click="replyHandler(comment)") {{ $customerText('message.reply') }}
 
             //- from tiktok ads
             div(v-if="isTiktokAdsComment")
@@ -228,7 +228,7 @@
                   div(v-if="isRedownloadButton" class="qcw-comment__note")
                     i
                       icon(name="ic-info")
-                    small You can only redownload an attachment file once
+                    small {{ $customerText('message.redownloadOnce') }}
 
               //- CommentType: "BOT REPLY QUICK REPLY"
               div(v-if="comment.type === 'custom' && comment.payload.type === 'quickreply'" class="button-message")
@@ -308,7 +308,7 @@
                 div(style="display: flex; justify-content: center; margin-top: 16px;")
                   button(class="qcw-download-file-button" @click="onRedownloadMedia(comment)")
                     icon(name="ic-download-borderless" :fill="messageStatusIconStyle")
-                    span() Download File
+                    span() {{ $customerText('common.downloadFile') }}
 
               //- Interactive Voice Call
               div(v-if="isInteractiveVoiceCall" class="comment-text")
@@ -476,8 +476,8 @@
         comment-broadcast-sender(:broadcaster-name="broadcasterName" :broadcaster-role="broadcasterRole" :broadcasted-at="broadcastedAt")
 
     div(class="failed-info" v-if="comment.isFailed"
-      :class="{ 'failed--last': isLast }") Message failed to send.
-      span(@click="resend(comment)" class="" v-if="comment.isFailed" :class="{'resend--inbox': isInboxMode}") Resend
+      :class="{ 'failed--last': isLast }") {{ $customerText('message.failed') }}
+      span(@click="resend(comment)" class="" v-if="comment.isFailed" :class="{'resend--inbox': isInboxMode}") {{ $customerText('message.resend') }}
 
 </template>
 
@@ -1024,8 +1024,8 @@ export default {
       const commentToBeSent = Object.assign({}, comment);
       commentToBeSent.payload = JSON.stringify(commentToBeSent.payload);
       return this.core.resendComment(commentToBeSent).then(
-        () => this.$toasted.success('Resending comment successful'),
-        () => this.$toasted.error('Resending comment failed'),
+        () => this.$toasted.success(this.$customerText('message.resendSuccess')),
+        () => this.$toasted.error(this.$customerText('message.resendFailed')),
       );
     },
     confirmDeleteComment(comment) {
@@ -1155,7 +1155,7 @@ export default {
         xhr.setRequestHeader('Accept', 'application/json');
 
         xhr.addEventListener('error', () => {
-          this.$toasted.error('Error download file');
+          this.$toasted.error(this.$customerText('message.downloadFailed'));
           reject(new Error('Error download file'));
         });
 
@@ -1172,10 +1172,10 @@ export default {
             link.download = filename;
             link.click();
             link.remove();
-            this.$toasted.success('File downloaded Successfully');
+            this.$toasted.success(this.$customerText('message.downloadSuccess'));
             resolve();
           } else {
-            this.$toasted.error('Error download file');
+            this.$toasted.error(this.$customerText('message.downloadFailed'));
             reject(new Error('Error download file'));
           }
         });

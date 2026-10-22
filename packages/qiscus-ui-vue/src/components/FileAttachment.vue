@@ -4,14 +4,14 @@
       v-if="fileType == 'audio' && !isBlacklistedFiles"
       :src="audioSource"
       width="100%"
-      controls) Your browser does not support the audio element.
+      controls) {{ $customerText('file.audioUnsupported') }}
     video(
       v-else-if="fileType == 'video' && !isBlacklistedFiles"
       :controlsList="controlsListValue"
       controls
       muted
       :src="videoSource"
-      width="100%") Sorry, your browser doesn't support embedded videos.
+      width="100%") {{ $customerText('file.videoUnsupported') }}
     image-loader(
       v-else
       :comment="comment"

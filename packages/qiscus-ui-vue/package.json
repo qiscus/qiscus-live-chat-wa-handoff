@@ -1,6 +1,6 @@
 {
   "name": "qiscus-ui-vue",
-  "version": "3.2.12",
+  "version": "3.2.13",
   "description": "A UI implementation of qiscus sdk core using Vue.js",
   "author": "Qiscus <contact.us@qiscus.com>",
   "private": true,
