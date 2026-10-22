@@ -74,3 +74,40 @@ describe("customer End chat bundle", () => {
     expect(await Bun.file(pub("css/qiscus-sdk.3.2.13.css")).exists()).toBe(true)
   })
 })
+
+describe("multilingual static assets", () => {
+  test("the handover room page uses an SDK build that contains the customer locale logic", async () => {
+    const html = await Bun.file(pub("live-handover-room.html")).text()
+    const css = /href="(\/css\/qiscus-sdk\.[\d.]+\.css)"/.exec(html)?.[1]
+    const js = /src="(\/js\/qiscus-sdk\.[\d.]+\.js)"/.exec(html)?.[1]
+    expect(css).toBeDefined()
+    expect(js).toBeDefined()
+    expect(html).toContain("customerLocale: 'auto'")
+    // CSS and JS must be the same SDK version.
+    expect(css!.match(/qiscus-sdk\.([\d.]+)\.css/)![1]).toBe(js!.match(/qiscus-sdk\.([\d.]+)\.js/)![1])
+    const sdk = await Bun.file(pub(js!.slice(1))).text()
+    expect(sdk).toContain("customerLocale")
+    expect(sdk).toContain("Akhiri chat")
+    expect(sdk).toContain("Seret file ke sini untuk mengunggah")
+    expect(await Bun.file(pub(css!.slice(1))).exists()).toBe(true)
+  })
+
+  test("the manifest carries no Indonesian-only copy now that English is the fallback", () => {
+    expect(manifest.lang).toBe("en")
+    expect(manifest.description).not.toMatch(/Lanjutkan/)
+  })
+
+  test("static pages default to English and only switch to Indonesian from browser languages", async () => {
+    // widget.html resolves its own locale (independent of the handoff-push bundle) from navigator.languages.
+    const widget = await Bun.file(pub("widget.html")).text()
+    expect(widget).toMatch(/<html lang="en">/)
+    expect(widget).toContain("navigator.languages")
+    for (const page of ["offline.html", "live-handover-room.html"]) {
+      const html = await Bun.file(pub(page)).text()
+      expect(html).toMatch(/<html lang="en">/)
+      expect(html).toContain("navigator.languages")
+    }
+    const bundle = await Bun.file(pub("js/push/handoff-push.js")).text()
+    expect(bundle).toContain("navigator.languages")
+  })
+})

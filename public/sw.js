@@ -9,9 +9,9 @@
  * own and not a system event. The customer's SDK user is the same one the
  * WhatsApp room uses, so pushes for other rooms are expected and dropped.
  * The notification body is a plain-text preview of the agent's message (at most
- * PREVIEW_MAX characters; attachments become "Mengirim gambar/file"; no agent
- * name). Title, icon and click target are fixed: nothing else from the payload
- * is ever used for display or navigation.
+ * PREVIEW_MAX characters; attachments use a localized label; no agent name.
+ * Title, icon and click target are fixed: nothing else from the payload is ever
+ * used for display or navigation.
  *
  * Caching: only the static shell below, and only as an OFFLINE fallback: every
  * shell request goes to the network first and refreshes the cached copy, so a
@@ -28,7 +28,8 @@
 /* global self, clients, caches, indexedDB */
 
 const TITLE = "Live Chat"
-const BODY = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
+const BODY_EN = "You have a new reply. Tap to open Live Chat."
+const BODY_ID = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
 const PREVIEW_MAX = 120
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)(\?|#|$)/i
 const ICON = "/img/pwa/icon-192.png"
@@ -112,7 +113,7 @@ function digits(value) {
 }
 
 /** The fields the decision needs, plus the message preview for the body. */
-function extract(raw) {
+function extract(raw, locale) {
   const data = asObject(raw && raw.data)
   const inner = asObject(data.payload !== undefined ? data.payload : raw && raw.payload)
   return {
@@ -120,24 +121,25 @@ function extract(raw) {
     commentId: digits(inner.id) || digits(inner.id_str),
     type: typeof inner.type === "string" ? inner.type : null,
     email: typeof inner.email === "string" ? inner.email : null,
-    preview: preview(inner),
+    preview: preview(inner, locale),
   }
 }
 
-function attachmentLabel(url) {
-  return IMAGE_EXT.test(String(url || "")) ? "Mengirim gambar" : "Mengirim file"
+function attachmentLabel(url, locale) {
+  if (locale === "id") return IMAGE_EXT.test(String(url || "")) ? "Mengirim gambar" : "Mengirim file"
+  return IMAGE_EXT.test(String(url || "")) ? "Sending an image" : "Sending a file"
 }
 
 /**
  * Plain-text preview of an agent comment, or null (-> generic BODY).
  * Notification bodies are rendered as text by the browser, never as HTML.
  */
-function preview(comment) {
+function preview(comment, locale) {
   const extra = asObject(comment.payload)
-  if (comment.type === "file_attachment") return attachmentLabel(extra.url)
+  if (comment.type === "file_attachment") return attachmentLabel(extra.url, locale)
   if (typeof comment.message !== "string") return null
   const file = /^\s*\[file\]\s*(\S+)\s*\[\/file\]\s*$/i.exec(comment.message) // legacy SDK attachment text
-  if (file) return attachmentLabel(file[1])
+  if (file) return attachmentLabel(file[1], locale)
   const text = comment.message.replace(/\s+/g, " ").trim()
   if (!text) return null
   const chars = Array.from(text) // do not cut an emoji / surrogate pair in half
@@ -165,7 +167,7 @@ function isChatPage(client) {
 
 async function handlePush(raw) {
   const ctx = await loadContext()
-  const c = extract(raw)
+  const c = extract(raw, ctx && ctx.locale)
   const list = await clients.matchAll({ type: "window", includeUncontrolled: true })
 
   if (shouldAnnounce(c, ctx)) {
@@ -174,7 +176,7 @@ async function handlePush(raw) {
     const existing = await self.registration.getNotifications({ tag })
     if (existing.length) return // same message via another FCM credential
     await self.registration.showNotification(TITLE, {
-      body: c.preview || BODY,
+      body: c.preview || (ctx.locale === "id" ? BODY_ID : BODY_EN),
       icon: ICON,
       badge: BADGE,
       tag,
