@@ -73,6 +73,8 @@ export interface SwContext {
   appId: string
   roomId: string
   selfEmail: string
+  /** Language for generic notification fallbacks; message content itself is never translated. */
+  locale?: "en" | "id"
 }
 
 export interface PushDeps {

@@ -190,7 +190,8 @@ const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async () => 
 } } };`
 
 async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean; systemEvent?: boolean } = {}): Promise<BrowserContext> {
-  const ctx = await browser.newContext({ userAgent: opts.userAgent })
+  // Indonesian browser: the assertions below expect the Indonesian copy (English is the fallback).
+  const ctx = await browser.newContext({ userAgent: opts.userAgent, locale: "id-ID" })
   if (opts.grant) await ctx.grantPermissions(["notifications"], { origin: ORIGIN })
   await ctx.addInitScript(FCM_SEAM)
   // the SDK stub renders a message list like the real room (.qcw-comments .inner)
