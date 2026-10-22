@@ -21,6 +21,7 @@ import { parseInviteLink } from "./inviteLink"
 import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
 import { detectSupport, probeBrowser } from "./support"
 import { writeSwContext } from "./swContext"
+import { MESSAGES, localizedText, resolveCustomerLocale, type CustomerLocale } from "./i18n"
 
 // Path prefix this page is served under ("/" at a domain root; see base.ts).
 const BASE = typeof location === "undefined" ? "/" : basePathOf(location.href)
@@ -142,55 +143,12 @@ const STYLE = `
 #handoff-push input{font:inherit;width:100%;box-sizing:border-box;padding:8px;margin:0 0 8px;border:1px solid #cfd4dc;border-radius:8px}
 `
 
-const TEXT = {
-  offer: "Mau dapat notifikasi saat agen membalas, meski halaman ini ditutup?",
-  onlyYou: "Hanya terlihat oleh Anda",
-  enable: "Aktifkan notifikasi",
-  later: "Nanti",
-  close: "Tutup",
-  busy: "Mengaktifkan notifikasi…",
-  enabled: "Notifikasi aktif. Kami akan memberi tahu saat agen membalas.",
-  off: "Matikan",
-  denied:
-    "Notifikasi diblokir di browser ini. Jika ingin diberi tahu saat agen membalas, izinkan notifikasi untuk situs ini di pengaturan browser.",
-  iosInstall: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu memasangnya di Layar Utama (iOS 16.4+):",
-  iosInstallSteps: [
-    "Ketuk “Salin link” di bawah.",
-    "Ketuk tombol Bagikan, lalu “Tambah ke Layar Utama” (pastikan “Buka sebagai Web App” aktif).",
-    "Buka Live Chat dari Layar Utama, lalu ketuk “Tempel”.",
-  ],
-  iosNoAddOption: "Tidak ada pilihan “Tambah ke Layar Utama”? Buka halaman ini di Safari dulu.",
-  iosOpenSafari: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu membukanya di Safari lalu memasangnya di Layar Utama:",
-  iosOpenSafariSteps: [
-    "Ketuk menu ⋯ di halaman ini, lalu pilih buka di Safari / browser.",
-    "Atau ketuk “Salin link”, buka Safari, lalu tempel di kolom alamat.",
-    "Di Safari, ikuti petunjuk berikutnya untuk menambahkan ke Layar Utama.",
-  ],
-  androidOpenBrowser: "Kalau ingin mendapatkan notifikasi di Live Chat, Anda perlu membukanya di Chrome (atau browser lain):",
-  androidOpenBrowserSteps: [
-    "Ketuk menu ⋮ di pojok kanan atas, lalu pilih “Buka di Chrome” / “Buka di browser”.",
-    "Atau ketuk “Salin link”, buka Chrome, lalu tempel di kolom alamat.",
-    "Di Chrome, ketuk “Aktifkan notifikasi”.",
-  ],
-  copyLink: "Salin link",
-  copied: "Link disalin",
-  copyFailed: "Gagal menyalin",
-  paste: "Tempel",
-  error: "Notifikasi belum bisa diaktifkan. Coba lagi nanti.",
-  errorBrowser:
-    "Notifikasi belum bisa diaktifkan di browser ini. Coba buka link undangan di Google Chrome, Microsoft Edge, Firefox, atau Safari, lalu aktifkan notifikasi di sana.",
-  errorBlocked: "Notifikasi diblokir oleh pemblokir konten/iklan di perangkat ini. Agar bisa aktif:",
-  errorBlockedSteps: [
-    "iPhone/iPad: buka Settings → Safari → Extensions, matikan pemblokir konten (mis. Firefox Focus, AdGuard, 1Blocker).",
-    "Matikan juga VPN atau DNS pemblokir iklan bila ada.",
-    "Tutup Live Chat, buka lagi, lalu ketuk “Coba lagi”.",
-  ],
-  retry: "Coba lagi",
-  pasteIntro: "Tempel link undangan dari WhatsApp untuk melanjutkan percakapan di aplikasi ini.",
-  pastePlaceholder: "https://…",
-  pasteGo: "Lanjutkan",
-  pasteBad: "Link tidak dikenali. Salin link undangan dari pesan WhatsApp, lalu tempel di sini.",
-}
+const LANGUAGE_PREFERENCES = typeof navigator === "undefined"
+  ? undefined
+  : navigator.languages?.length ? navigator.languages : navigator.language
+export const LOCALE: CustomerLocale = resolveCustomerLocale(LANGUAGE_PREFERENCES)
+const TEXT = MESSAGES[LOCALE]
+if (typeof document !== "undefined") document.documentElement.lang = LOCALE
 
 function button(label: string, onClick: () => void, primary = false): HTMLButtonElement {
   const b = document.createElement("button")
@@ -423,7 +381,7 @@ function createUi(actions: { enable(): void; disable(): void }) {
             : { text: state.reason === "fcm" ? TEXT.errorBrowser : TEXT.error }),
           buttons: [button(TEXT.close, hideAll), button(TEXT.retry, actions.enable, true)],
           // Shown on the page: after a reopen the console trail is gone.
-          detail: `Kode: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
+          detail: `${TEXT.errorCode}: ${state.reason}${state.detail ? ` — ${state.detail}` : ""}`,
         }
       case "unconfigured":
         // Not a customer-facing condition; visible to operators in the console.
@@ -597,7 +555,7 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
     requestPermission: () => Notification.requestPermission(),
     loadConfig,
     fcm,
-    swContext: { write: (ctx) => writeSwContext(indexedDB, ctx) },
+    swContext: { write: (ctx) => writeSwContext(indexedDB, ctx ? { ...ctx, locale: LOCALE } : null) },
     sdkBaseUrl: opts.sdkBaseUrl,
     onState: (s) => ui.render(s),
     debug,

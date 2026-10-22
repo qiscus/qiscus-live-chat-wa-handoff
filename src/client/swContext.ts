@@ -30,7 +30,7 @@ export async function writeSwContext(idb: IDBFactory, ctx: SwContext | null): Pr
       const tx = db.transaction(CTX_STORE, "readwrite")
       const store = tx.objectStore(CTX_STORE)
       const req = ctx
-        ? store.put({ appId: ctx.appId, roomId: ctx.roomId, selfEmail: ctx.selfEmail }, CTX_KEY)
+        ? store.put({ appId: ctx.appId, roomId: ctx.roomId, selfEmail: ctx.selfEmail, ...(ctx.locale ? { locale: ctx.locale } : {}) }, CTX_KEY)
         : store.delete(CTX_KEY)
       req.onsuccess = () => resolve()
       req.onerror = () => reject(req.error)

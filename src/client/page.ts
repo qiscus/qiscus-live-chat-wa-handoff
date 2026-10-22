@@ -12,21 +12,28 @@
  * invite stays in the fragment, which never reaches a server.
  */
 import { basePathOf } from "./base"
-import { type HandoffPushApi, debug, start } from "./main"
+import { localizedText } from "./i18n"
+import { type HandoffPushApi, LOCALE, debug, start } from "./main"
 import { pickApiOrigin, pickIframeUrl, pickSdkOrigin } from "./origins"
 
-export const MESSAGES = {
-  missing_token: "Link tidak lengkap. Silakan minta link baru lewat WhatsApp.",
-  already_used: "Link ini sudah dipakai. Kirim pesan lagi di WhatsApp untuk mendapat link baru.",
-  invalid_token: "Link tidak berlaku atau sudah kedaluwarsa. Silakan minta link baru.",
-  session_over: "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
-  too_many_requests: "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
-  network_error: "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
-  invalid_script: "Konfigurasi widget tidak valid.",
-  session_expired: "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
-  no_session: "Belum ada percakapan aktif di aplikasi ini.",
-  unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
-} as const
+/** Status keys the page can show; the copy lives in i18n.ts as `page.<key>` (EN/ID). */
+export const MESSAGE_KEYS = [
+  "missing_token",
+  "already_used",
+  "invalid_token",
+  "session_over",
+  "too_many_requests",
+  "network_error",
+  "invalid_script",
+  "session_expired",
+  "no_session",
+  "unknown",
+] as const
+export type MessageKey = (typeof MESSAGE_KEYS)[number]
+
+/** Status copy in the customer's browser language (navigator.languages, English fallback). */
+export const pageText = (key: MessageKey | "connecting"): string => localizedText(LOCALE, `page.${key}`)
+const isMessageKey = (key: string): key is MessageKey => (MESSAGE_KEYS as readonly string[]).includes(key)
 
 export interface PageEnv {
   /** qismo-api: invite exchange and session calls. */
@@ -55,10 +62,11 @@ interface QismoFullCtor {
 
 function boot(): void {
   const statusEl = document.getElementById("handover-status") as HTMLElement
-  const say = (key: keyof typeof MESSAGES) => {
+  const say = (key: MessageKey) => {
     statusEl.style.display = ""
-    statusEl.textContent = MESSAGES[key]
+    statusEl.textContent = pageText(key)
   }
+  if (statusEl.style.display !== "none") statusEl.textContent = pageText("connecting")
 
   // QismoFull strips #t= from the address bar before exchanging it. Put it
   // back so the same link keeps working: a refresh, or "open in browser" from
@@ -95,7 +103,7 @@ function boot(): void {
             statusEl.style.display = "none"
             push?.handoffReady()
           } else if (event.event_name === "qiscus:handoff-error") {
-            statusEl.textContent = MESSAGES[event.code as keyof typeof MESSAGES] || MESSAGES.unknown
+            statusEl.textContent = pageText(event.code && isMessageKey(event.code) ? event.code : "unknown")
             if (hasInvite) push?.inviteFailed()
           }
         },
