@@ -9,7 +9,8 @@ import { loadServiceWorker, type SwHarness } from "./swTesting"
 
 const ORIGIN = "https://handoff.example.invalid"
 const SW_SOURCE = await Bun.file(new URL("../../public/sw.js", import.meta.url)).text()
-const CTX = { appId: "app1", roomId: "500", selfEmail: "customer@example.invalid" }
+const CTX = { appId: "app1", roomId: "500", selfEmail: "customer@example.invalid", locale: "id" as const }
+const CTX_EN = { ...CTX, locale: "en" as const }
 
 function fcmEnvelope(comment: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   // FCM data values are strings; the SDK payload arrives JSON-encoded.
@@ -41,7 +42,7 @@ const agentReply = (over: Record<string, unknown> = {}) => ({
 
 let sw: SwHarness
 
-async function withContext(ctx: typeof CTX | null) {
+async function withContext(ctx: typeof CTX | typeof CTX_EN | null) {
   // Written exactly as the page does it (swContext.ts), read by the SW.
   await writeSwContext(sw.indexedDB as unknown as IDBFactory, ctx)
 }
@@ -102,6 +103,16 @@ describe("sw.js push handling (synthetic)", () => {
     expect(visible().map((n) => n.options.body)).toEqual([
       "Ada balasan baru dari agen. Ketuk untuk membuka percakapan.",
       "Ada balasan baru dari agen. Ketuk untuk membuka percakapan.",
+    ])
+  })
+
+  test("English browser context uses English fallback and attachment labels", async () => {
+    await withContext(CTX_EN)
+    await push(fcmEnvelope(agentReply({ id: 1, type: "file_attachment", message: "", payload: { url: "https://cdn.example/a/photo.JPG" } })))
+    await push(fcmEnvelope(agentReply({ id: 2, message: "  " })))
+    expect(visible().map((n) => n.options.body)).toEqual([
+      "Sending an image",
+      "You have a new reply. Tap to open Live Chat.",
     ])
   })
 

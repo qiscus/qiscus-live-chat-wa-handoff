@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -42,7 +42,7 @@
     </style>
   </head>
   <body>
-    <div id="handover-status">Menghubungkan…</div>
+    <div id="handover-status">Connecting…</div>
     <script>
       /**
        * Mount the QismoFull bundle served by this same Worker
@@ -63,18 +63,70 @@
         iframeUrl: "https://omnichannel.qiscus.com",
       };
       var statusEl = document.getElementById("handover-status");
+      // Self-contained EN/ID copy so these messages stay localized even when
+      // /js/push/handoff-push.js fails to load. Locale: navigator.languages in
+      // order, then navigator.language; English unless an `id` tag comes first.
+      var FALLBACK_TEXT = {
+        en: {
+          "page.connecting": "Connecting…",
+          "page.missing_token": "This link is incomplete. Please request a new link through WhatsApp.",
+          "page.already_used": "This link has already been used. Send us another message on WhatsApp to get a new link.",
+          "page.invalid_token": "This link is invalid or has expired. Please request a new one.",
+          "page.session_over": "This conversation has moved back to WhatsApp. Please check your WhatsApp.",
+          "page.too_many_requests": "Too many attempts. Please try again shortly.",
+          "page.network_error": "Unable to connect to the server. Check your connection and reload the page.",
+          "page.invalid_script": "The widget configuration is invalid.",
+          "page.session_expired": "Your chat session has ended. Please request a new link through WhatsApp.",
+          "page.no_session": "There is no active conversation in this app yet.",
+          "page.unknown": "Something went wrong. Please reload the page.",
+        },
+        id: {
+          "page.connecting": "Menghubungkan…",
+          "page.missing_token": "Link tidak lengkap. Silakan minta link baru lewat WhatsApp.",
+          "page.already_used": "Link ini sudah dipakai. Kirim pesan lagi di WhatsApp untuk mendapat link baru.",
+          "page.invalid_token": "Link tidak berlaku atau sudah kedaluwarsa. Silakan minta link baru.",
+          "page.session_over": "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
+          "page.too_many_requests": "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
+          "page.network_error": "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
+          "page.invalid_script": "Konfigurasi widget tidak valid.",
+          "page.session_expired": "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
+          "page.no_session": "Belum ada percakapan aktif di aplikasi ini.",
+          "page.unknown": "Terjadi kesalahan. Silakan muat ulang halaman.",
+        },
+      };
+      function detectLocale() {
+        var nav = typeof navigator === "undefined" ? null : navigator;
+        var list = [];
+        try {
+          if (nav && nav.languages && nav.languages.length) list = Array.prototype.slice.call(nav.languages);
+          else if (nav && nav.language) list = [nav.language];
+        } catch (_) {}
+        for (var i = 0; i < list.length; i++) {
+          var tag = list[i];
+          if (typeof tag !== "string") continue;
+          if (/^id(?:[-_]|$)/i.test(tag)) return "id";
+          if (/^en(?:[-_]|$)/i.test(tag)) return "en";
+        }
+        return "en";
+      }
+      var locale = detectLocale();
+      document.documentElement.lang = locale;
+      var text = function (key) {
+        return FALLBACK_TEXT[locale][key] || FALLBACK_TEXT.en[key] || key;
+      };
+      statusEl.textContent = text("page.connecting");
 
       var PESAN = {
-        missing_token: "Link tidak lengkap. Silakan minta link baru lewat WhatsApp.",
-        already_used: "Link ini sudah dipakai. Kirim pesan lagi di WhatsApp untuk mendapat link baru.",
-        invalid_token: "Link tidak berlaku atau sudah kedaluwarsa. Silakan minta link baru.",
-        session_over: "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
-        too_many_requests: "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
-        network_error: "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
-        invalid_script: "Konfigurasi widget tidak valid.",
-        session_expired: "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
-        no_session: "Belum ada percakapan aktif di aplikasi ini.",
-        unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
+        missing_token: text("page.missing_token"),
+        already_used: text("page.already_used"),
+        invalid_token: text("page.invalid_token"),
+        session_over: text("page.session_over"),
+        too_many_requests: text("page.too_many_requests"),
+        network_error: text("page.network_error"),
+        invalid_script: text("page.invalid_script"),
+        session_expired: text("page.session_expired"),
+        no_session: text("page.no_session"),
+        unknown: text("page.unknown"),
       };
 
       // Query override, restricted to Qiscus hosts over HTTPS or localhost;
