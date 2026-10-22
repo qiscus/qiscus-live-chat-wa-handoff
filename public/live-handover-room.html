@@ -19,7 +19,7 @@
         - title uses the default product name (no white-label config).
       Keep in sync with the Blade view when it changes.
     -->
-    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.6.css" />
+    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.13.css" />
     <style>
         html,
         body {
@@ -146,6 +146,24 @@
             font-size: 16px;
         }
     </style>
+    <script>
+        (function () {
+            var languages = navigator.languages && navigator.languages.length
+                ? navigator.languages
+                : [navigator.language || ''];
+            for (var i = 0; i < languages.length; i += 1) {
+                if (/^id(?:[-_]|$)/i.test(languages[i])) {
+                    document.documentElement.lang = 'id';
+                    return;
+                }
+                if (/^en(?:[-_]|$)/i.test(languages[i])) {
+                    document.documentElement.lang = 'en';
+                    return;
+                }
+            }
+            document.documentElement.lang = 'en';
+        })();
+    </script>
 </head>
 
 <body>
@@ -160,7 +178,7 @@
         })();
     </script>
     <div id="qiscus-widget"></div>
-    <script src="/js/qiscus-sdk.3.2.6.js"></script>
+    <script src="/js/qiscus-sdk.3.2.13.js"></script>
     <script src="/js/third-party/aes.js"></script>
     <script src="/js/push/handoff-room.js"></script>
     <script>
@@ -203,13 +221,25 @@
 
             function showError() {
                 var div = document.createElement('div');
+                var content = document.createElement('div');
+                var image = document.createElement('img');
+                var title = document.createElement('div');
+                var titleWrap = document.createElement('div');
+                var message = document.createElement('div');
+                var isIndonesian = document.documentElement.lang === 'id';
                 div.className = 'error-app';
-                div.innerHTML =
-                    '<div>' +
-                    '<img src="/img/fail_load_widget.svg" alt="fail_load_widget">' +
-                    '<div class="fail-title"><div>Oops...</div></div>' +
-                    '<div>Something went wrong. Please try again by refreshing your browser.</div>' +
-                    '</div>';
+                image.src = '/img/fail_load_widget.svg';
+                image.alt = 'fail_load_widget';
+                title.textContent = isIndonesian ? 'Ups...' : 'Oops...';
+                titleWrap.className = 'fail-title';
+                titleWrap.appendChild(title);
+                message.textContent = isIndonesian
+                    ? 'Terjadi kesalahan. Silakan muat ulang browser Anda.'
+                    : 'Something went wrong. Please try again by refreshing your browser.';
+                content.appendChild(image);
+                content.appendChild(titleWrap);
+                content.appendChild(message);
+                div.appendChild(content);
                 document.body.appendChild(div);
             }
 
@@ -267,11 +297,30 @@
                             document.querySelector('#qismo-widget-custom-css').innerText = e.data.css;
                         }
                     }
+                    if (e.data.event_name == 'qiscus:customer-end-chat-result') {
+                        if (e.source !== window.parent) return;
+                        finishEndChat(e.data.ok === true);
+                        return;
+                    }
                     if (e.data.event_name == 'send-message') {
                         var rid = QiscusSDK.core.selected.id;
                         QiscusSDK.core.sendComment(rid, e.data.text, null, e.data.type || 'text', null, e.data.payload || null, e.data.extras || null);
                     }
                 });
+            }
+
+            var endChatTimer = null;
+            var END_CHAT_TIMEOUT_MS = 15000;
+
+            function requestEndChat() {
+                clearTimeout(endChatTimer);
+                endChatTimer = setTimeout(function () { finishEndChat(false); }, END_CHAT_TIMEOUT_MS);
+                sendMessage({ event_name: 'qiscus:customer-end-chat' });
+            }
+
+            function finishEndChat(ok) {
+                clearTimeout(endChatTimer);
+                QiscusUI.setCustomerEndChatState(ok ? 'ended' : 'error');
             }
 
             function attachCustomCss() {
@@ -288,6 +337,9 @@
                     mode: 'wide',
                     uploadURL: qiscusBaseUrl + '/api/v2/sdk/upload',
                     options: {
+                        customerEndChat: true,
+                        customerLocale: 'auto',
+                        customerEndChatCallback: requestEndChat,
                         loginSuccessCallback: function (userData) {
                             QiscusSDK.core.chatGroup(roomId).then(function () {
                                 // Identity verified upstream (verify_identity_token)

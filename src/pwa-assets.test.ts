@@ -50,3 +50,27 @@ describe("manifest.webmanifest", () => {
     expect(html).not.toMatch(/https?:\/\//)
   })
 })
+
+describe("customer End chat bundle", () => {
+  test("room and parent bundle implement the end-chat message contract", async () => {
+    const room = await Bun.file(pub("live-handover-room.html")).text()
+    const hosted = await Bun.file(pub("widget.html")).text()
+    const widget = await Bun.file(pub("js/qismo-full-v5.js")).text()
+    const sdk = await Bun.file(pub("js/qiscus-sdk.3.2.13.js")).text()
+
+    expect(room.includes("qiscus-sdk.3.2.13.js")).toBe(true)
+    expect(room.includes("qiscus-sdk.3.2.13.css")).toBe(true)
+    expect(room.includes("customerEndChat: true")).toBe(true)
+    expect(room.includes("customerLocale: 'auto'")).toBe(true)
+    expect(room.includes("END_CHAT_TIMEOUT_MS = 15000")).toBe(true)
+    expect(room.includes("qiscus:customer-end-chat-result")).toBe(true)
+    expect(room.includes("e.source !== window.parent")).toBe(true)
+    expect(hosted.includes("customerEndChat: true")).toBe(false)
+    expect(widget.includes("qiscus:customer-end-chat")).toBe(true)
+    expect(widget.includes("qiscus:customer-end-chat-result")).toBe(true)
+    expect(sdk.includes("customerEndChat")).toBe(true)
+    expect(sdk.includes("Akhiri chat")).toBe(true)
+    expect(await Bun.file(pub("js/qiscus-sdk.3.2.13.js")).exists()).toBe(true)
+    expect(await Bun.file(pub("css/qiscus-sdk.3.2.13.css")).exists()).toBe(true)
+  })
+})
