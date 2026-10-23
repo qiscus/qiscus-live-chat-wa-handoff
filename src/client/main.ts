@@ -16,7 +16,7 @@
  */
 import type { PushConfig } from "../push/config"
 import { type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
-import { parseInviteLink } from "./inviteLink"
+import { parseInviteEnv, parseInviteLink, type InviteEnv } from "./inviteLink"
 import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
 import { detectSupport, probeBrowser } from "./support"
 import { writeSwContext } from "./swContext"
@@ -404,7 +404,7 @@ function createUi(actions: { enable(): void; disable(): void }) {
     paint(view(state))
   }
 
-  function showPasteForm(onToken: (token: string) => void) {
+  function showPasteForm(onToken: (token: string, env: InviteEnv) => void) {
     hideAll()
     root.replaceChildren()
     const p = document.createElement("p")
@@ -420,13 +420,14 @@ function createUi(actions: { enable(): void; disable(): void }) {
       TEXT.pasteGo,
       () => {
         const token = parseInviteLink(input.value, location.origin)
+        const env = parseInviteEnv(input.value, location.origin)
         input.value = ""
         if (!token) {
           err.textContent = TEXT.pasteBad
           err.hidden = false
           return
         }
-        onToken(token)
+        onToken(token, env)
       },
       true,
     )
@@ -688,10 +689,16 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     },
     offerPasteLink() {
       if (!isStandalone() || loadSession(window.localStorage, Date.now()).state === "valid") return false
-      ui.showPasteForm((token) => {
+      ui.showPasteForm((token, env) => {
+        // The Home Screen app starts without baseUrl/iframeUrl; carry the ones
+        // from the pasted link so the token is exchanged on its own environment.
+        const query = new URLSearchParams(location.search)
+        if (env.baseUrl) query.set("baseUrl", env.baseUrl)
+        if (env.iframeUrl) query.set("iframeUrl", env.iframeUrl)
+        const search = query.toString() ? `?${query.toString()}` : ""
         // Same transport as the normal invite: the fragment, which QismoFull
         // strips before the exchange and which never reaches a server.
-        history.replaceState(null, "", `/widget.html${location.search}#t=${encodeURIComponent(token)}`)
+        history.replaceState(null, "", `/widget.html${search}#t=${encodeURIComponent(token)}`)
         location.reload()
       })
       return true

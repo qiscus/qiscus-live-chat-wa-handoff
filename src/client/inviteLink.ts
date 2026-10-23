@@ -39,3 +39,50 @@ export function parseInviteLink(input: string, selfOrigin: string): string | nul
   }
   return TOKEN_RE.test(token) ? token : null
 }
+
+export interface InviteEnv {
+  baseUrl?: string
+  iframeUrl?: string
+}
+
+function isLocal(url: URL): boolean {
+  return (url.hostname === "localhost" || url.hostname === "127.0.0.1") && /^https?:$/.test(url.protocol)
+}
+
+function isQiscusHttps(url: URL): boolean {
+  return url.protocol === "https:" && QISCUS_HOST.test(url.hostname)
+}
+
+/**
+ * The environment a pasted widget link points at (`baseUrl` = the qismo-api the
+ * token belongs to, `iframeUrl` = the room host). The Home Screen app starts at
+ * `/widget.html?source=pwa`, without these, so a token minted on another
+ * environment would otherwise be exchanged against the production default and
+ * refused. Same rules as widget.html's `fromQuery`: baseUrl only on https
+ * Qiscus hosts (or localhost); iframeUrl also on this page's own origin.
+ * Only this page's own link form can carry them; anything refused is dropped.
+ */
+export function parseInviteEnv(input: string, selfOrigin: string): InviteEnv {
+  let url: URL
+  try {
+    url = new URL((input || "").trim())
+  } catch {
+    return {}
+  }
+  if (url.origin !== selfOrigin || url.pathname !== "/widget.html") return {}
+  const env: InviteEnv = {}
+  const pick = (name: string, allowSelf: boolean): string | undefined => {
+    const raw = url.searchParams.get(name)
+    if (!raw) return undefined
+    try {
+      const u = new URL(raw, selfOrigin)
+      if ((allowSelf && u.origin === selfOrigin) || isQiscusHttps(u) || isLocal(u)) return u.origin
+    } catch {}
+    return undefined
+  }
+  const baseUrl = pick("baseUrl", false)
+  const iframeUrl = pick("iframeUrl", true)
+  if (baseUrl) env.baseUrl = baseUrl
+  if (iframeUrl) env.iframeUrl = iframeUrl
+  return env
+}
