@@ -1,6 +1,6 @@
 // SYNTHETIC: fake windows/storage; invented app codes, users and invite tokens.
 import { describe, expect, test } from "bun:test"
-import { parseInviteLink } from "./inviteLink"
+import { parseInviteEnv, parseInviteLink } from "./inviteLink"
 import { persistLogin, resumeSession, trustedParent } from "./room"
 import { SESSION_KEY } from "./session"
 import { MemoryStorage } from "./testing"
@@ -82,5 +82,22 @@ describe("parseInviteLink (synthetic tokens)", () => {
     ]) {
       expect(parseInviteLink(bad, ORIGIN)).toBeNull()
     }
+  })
+})
+
+describe("parseInviteEnv (environment carried by a pasted widget link)", () => {
+  const T = "eyJhbG...-abc"
+  test("keeps baseUrl and iframeUrl from this page's link as origins", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://qismo-stag2.qiscus.io/x")}&iframeUrl=${encodeURIComponent(ORIGIN)}#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io", iframeUrl: ORIGIN })
+  })
+  test("drops hosts that fromQuery would refuse", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=https%3A%2F%2Fevil.example&iframeUrl=https%3A%2F%2Fevil.example#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({})
+    expect(parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(ORIGIN)}#t=${T}`, ORIGIN)).toEqual({})
+  })
+  test("redirector links and junk carry nothing", () => {
+    expect(parseInviteEnv(`https://qismo.qiscus.com/c/${T}`, ORIGIN)).toEqual({})
+    expect(parseInviteEnv("not a url", ORIGIN)).toEqual({})
   })
 })
