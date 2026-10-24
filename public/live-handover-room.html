@@ -78,17 +78,51 @@
             height: 100%;
         }
 
-        /* A handed-over room should read like the WhatsApp chat it came from, so the
-           SDK's system-event lines (agent joined, room linked, ...) are not shown to
-           the customer. Display only: the events still arrive and newMessagesCallback
-           still acts on them (resolved), and the date header above an event stays. */
-        .qcw-comment--system_event .qcw-comment--system-event {
-            display: none;
+        /* System events (agent joined, "Continued from WhatsApp", resolved, ...) are
+           notices, not messages. The SDK renders each one as its own row
+           (.qcw-comment-container.qcw-comment--system_event) holding the text in
+           .qcw-comment--system-event, but the same row also gets the bubble classes
+           (qcw-comment--cust, sometimes comment--me) and an inline 24px margin in some
+           templates, so pin it down here: one centred, muted pill per row, never
+           aligned or coloured like a customer or agent bubble, and no extra spacing.
+           The events stay visible (QA Session 040, TC-PF-01); newMessagesCallback
+           still acts on them (resolved) and the date header above an event stays. */
+        .qcw-comment-container.qcw-comment--system_event {
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+            margin: 0 0 12px;
+            border-bottom: 0 !important;
         }
 
-        .qcw-comment-container.qcw-comment--system_event {
-            margin-bottom: 0;
-            border-bottom: 0 !important;
+        .qcw-comment-container.qcw-comment--system_event .qcw-comment-date {
+            width: 100%;
+        }
+
+        .qcw-comment--system_event .qcw-comment--system-event {
+            display: block;
+            -webkit-box-flex: 0;
+            -ms-flex: 0 1 auto;
+            flex: 0 1 auto;
+            max-width: 85%;
+            margin: 4px auto !important;
+            padding: 4px 12px;
+            border: 0 !important;
+            border-radius: 12px;
+            background: #EEF0F2 !important;
+            box-shadow: none !important;
+            color: #565656 !important;
+            font-size: 12px;
+            font-style: normal;
+            font-weight: 400;
+            line-height: 16px;
+            text-align: center;
+            overflow-wrap: anywhere;
+        }
+
+        .qcw-comment--system_event .qcw-comment--system-event a {
+            color: inherit !important;
+            text-decoration: underline;
         }
 
         .qcw-copyright {

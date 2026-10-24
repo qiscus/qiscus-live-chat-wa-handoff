@@ -201,8 +201,12 @@ const SDK_STUB = `(function(){
     if(window.__SYNTH_ROOM_LIST__){var c=document.createElement('div');c.className='qcw-comments';c.style.cssText='height:600px;overflow:auto';
       c.innerHTML='<div class="inner"><ul><li class="qcw-comment">synthetic agent message</li></ul></div>';document.body.appendChild(c);}
     if(window.__SYNTH_SYSTEM_EVENT__){var s=document.createElement('div');s.id='synthetic-thread';
-      s.innerHTML='<div class="qcw-comment-container qcw-comment--system_event" id="se1"><div class="qcw-comment-date"><div>Today</div></div><div class="qcw-comment--system-event"><div>Agent A joined this conversation</div></div><div><!----></div></div>'
-        +'<div class="qcw-comment-container qcw-comment--text" id="c2"><div class="qcw-comment"><div class="qcw-comment__message">synthetic agent reply</div></div></div>';
+      // SDK 3.2.6 markup: a system-event row also carries the bubble classes
+      // (qcw-comment--cust, comment--me), and one template sets an inline 24px margin
+      s.innerHTML='<div class="parent--container contain-date"><div class="qcw-comment-container qcw-comment--system_event qcw-comment--cust" id="se1"><div class="qcw-comment-date"><div>Today</div></div><div class="qcw-comment--system-event"><div><div>10:00:00 - Continued from WhatsApp</div></div></div><div><!----></div></div></div>'
+        +'<div class="my--container"><div class="qcw-comment-container qcw-comment--system_event qcw-comment--cust comment--me" id="se2"><div class="qcw-comment--system-event" style="margin:24px auto"><div><div>10:00:05 - Agent A joined this conversation</div></div></div><div><!----></div></div></div>'
+        +'<div class="qcw-comment-container qcw-comment--text" id="c2"><div class="qcw-comment"><div class="qcw-comment__message">synthetic agent reply</div></div></div>'
+        +'<div class="my--container"><div class="qcw-comment-container qcw-comment--text comment--me qcw-comment--cust" id="c3"><div class="qcw-comment comment--me"><div class="qcw-comment__message" style="background:#27B199;color:#fff">synthetic customer message</div></div></div></div>';
       document.body.appendChild(s);}}};
   window.QiscusUI={setCustomColors:function(){}};
 })();`
@@ -570,7 +574,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "system events are hidden from the customer; messages and their date header stay",
+    "system events (\"Continued from WhatsApp\", agent joined) show as centred notices, not bubbles, with no extra space",
     async () => {
       upstream.reset()
       const ctx = await newContext({ grant: true, systemEvent: true })
@@ -578,10 +582,45 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       await page.goto(invite("synthetic-invite-A"))
       const room = page.frameLocator("#qcw-iframe")
       await room.locator("#synthetic-thread").waitFor({ state: "attached" })
-      expect(await room.locator(".qcw-comment--system-event").isHidden()).toBe(true)
-      expect(await room.getByText("Agent A joined this conversation").isVisible()).toBe(false)
+      expect(await room.getByText("10:00:00 - Continued from WhatsApp").isVisible()).toBe(true)
+      expect(await room.getByText("10:00:05 - Agent A joined this conversation").isVisible()).toBe(true)
       expect(await room.locator("#se1 .qcw-comment-date").isVisible()).toBe(true)
       expect(await room.getByText("synthetic agent reply").isVisible()).toBe(true)
+      expect(await room.getByText("synthetic customer message").isVisible()).toBe(true)
+
+      const probe = await room.locator("#synthetic-thread").evaluate((thread) => {
+        const box = (el: Element) => el.getBoundingClientRect()
+        const customer = getComputedStyle(thread.querySelector("#c3 .qcw-comment__message")!)
+        return ["#se1", "#se2"].map((id) => {
+          const row = thread.querySelector(id)!
+          const pill = row.querySelector(".qcw-comment--system-event")!
+          const date = row.querySelector(".qcw-comment-date")
+          const r = box(row), p = box(pill), cs = getComputedStyle(pill)
+          return {
+            offCentre: Math.abs(p.left + p.width / 2 - (r.left + r.width / 2)),
+            narrower: p.width < r.width,
+            background: cs.backgroundColor,
+            customerBackground: customer.backgroundColor,
+            textAlign: cs.textAlign,
+            // row height beyond the date header + the pill's own 4px top/bottom margins
+            extra: r.height - (date ? box(date).height + parseFloat(getComputedStyle(date).marginTop) + parseFloat(getComputedStyle(date).marginBottom) : 0) - p.height - 8,
+          }
+        })
+      })
+      for (const [i, p] of probe.entries()) {
+        const id = ["#se1", "#se2"][i]
+        expect(p.offCentre, `${id} centred`).toBeLessThanOrEqual(1)
+        expect(p.narrower, `${id} is a pill, not a full-width row`).toBe(true)
+        expect(p.textAlign).toBe("center")
+        expect(p.background, `${id} not coloured like the customer bubble`).not.toBe(p.customerBackground)
+        expect(p.background).toBe("rgb(238, 240, 242)")
+        expect(Math.abs(p.extra), `${id} leaves no extra vertical space`).toBeLessThanOrEqual(1)
+      }
+
+      // lifecycle unchanged: a resolved system event still closes the session
+      const frame = page.frame({ url: /live-handover-room/ })!
+      await frame.evaluate(() => (window as any).QiscusSDK.core.cfg.options.newMessagesCallback([{ type: "system_event", message: "Agent marked this as resolved" }]))
+      expect(await frame.evaluate(() => (window as any).__sentComments || 0)).toBe(0)
       await ctx.close()
     },
     60_000,
