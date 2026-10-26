@@ -1,25 +1,28 @@
 // The forked packages (packages/) and what public/ serves must agree.
 import { describe, expect, test } from "bun:test"
 import { existsSync, readdirSync } from "node:fs"
-import { sdkVersion } from "../../scripts/build-vendor"
 
 const pub = new URL("../../public/", import.meta.url).pathname
 
 describe("vendor bundles from packages/", () => {
-  test("the room page loads the qiscus-sdk version of packages/qiscus-ui-vue", async () => {
-    const v = await sdkVersion()
+  test("the room page loads the fixed-name qiscus-handoff bundle", async () => {
     const room = await Bun.file(pub + "live-handover-room.html").text()
-    expect(room).toContain(`/css/qiscus-sdk.${v}.css`)
-    expect(room).toContain(`/js/qiscus-sdk.${v}.js`)
-    expect(room.match(/qiscus-sdk\.\d+\.\d+\.\d+\./g)?.every((m) => m === `qiscus-sdk.${v}.`)).toBe(true)
+    expect(room).toContain("/css/qiscus-handoff.css")
+    expect(room).toContain("/js/qiscus-handoff.js")
+    expect(room).not.toMatch(/qiscus-sdk\.\d+\.\d+\.\d+\./)
   })
 
-  test("public/ ships exactly that qiscus-sdk version, plus qismo-full-v5.js", async () => {
-    const v = await sdkVersion()
-    for (const f of [`js/qiscus-sdk.${v}.js`, `js/qiscus-sdk.${v}.js.map`, `css/qiscus-sdk.${v}.css`, "js/qismo-full-v5.js"]) {
+  test("public/ ships qiscus-handoff plus qismo-full-v5.js and no versioned qiscus-sdk files", async () => {
+    for (const f of ["js/qiscus-handoff.js", "js/qiscus-handoff.js.map", "css/qiscus-handoff.css", "js/qismo-full-v5.js"]) {
       expect(existsSync(pub + f)).toBe(true)
     }
-    const shipped = [...readdirSync(pub + "js"), ...readdirSync(pub + "css")].filter((n) => n.startsWith("qiscus-sdk."))
-    expect(shipped.sort()).toEqual([`qiscus-sdk.${v}.css`, `qiscus-sdk.${v}.js`, `qiscus-sdk.${v}.js.map`])
+    expect([...readdirSync(pub + "js"), ...readdirSync(pub + "css")].filter((n) => n.startsWith("qiscus-sdk."))).toEqual([])
+  })
+
+  test("the bundle and its map point at each other by the new name", async () => {
+    const js = await Bun.file(pub + "js/qiscus-handoff.js").text()
+    expect(js).toContain("sourceMappingURL=qiscus-handoff.js.map")
+    expect(js).not.toContain("qiscus-sdk.")
+    expect((await Bun.file(pub + "js/qiscus-handoff.js.map").json()).file).toBe("static/js/qiscus-handoff.js")
   })
 })

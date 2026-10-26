@@ -56,10 +56,10 @@ describe("customer End chat bundle", () => {
     const room = await Bun.file(pub("live-handover-room.html")).text()
     const hosted = await Bun.file(pub("widget.html")).text()
     const widget = await Bun.file(pub("js/qismo-full-v5.js")).text()
-    const sdk = await Bun.file(pub("js/qiscus-sdk.3.2.13.js")).text()
+    const sdk = await Bun.file(pub("js/qiscus-handoff.js")).text()
 
-    expect(room.includes("qiscus-sdk.3.2.13.js")).toBe(true)
-    expect(room.includes("qiscus-sdk.3.2.13.css")).toBe(true)
+    expect(room.includes("qiscus-handoff.js")).toBe(true)
+    expect(room.includes("qiscus-handoff.css")).toBe(true)
     expect(room.includes("customerEndChat: true")).toBe(true)
     expect(room.includes("customerLocale: 'auto'")).toBe(true)
     expect(room.includes("END_CHAT_TIMEOUT_MS = 15000")).toBe(true)
@@ -70,21 +70,19 @@ describe("customer End chat bundle", () => {
     expect(widget.includes("qiscus:customer-end-chat-result")).toBe(true)
     expect(sdk.includes("customerEndChat")).toBe(true)
     expect(sdk.includes("Akhiri chat")).toBe(true)
-    expect(await Bun.file(pub("js/qiscus-sdk.3.2.13.js")).exists()).toBe(true)
-    expect(await Bun.file(pub("css/qiscus-sdk.3.2.13.css")).exists()).toBe(true)
+    expect(await Bun.file(pub("js/qiscus-handoff.js")).exists()).toBe(true)
+    expect(await Bun.file(pub("css/qiscus-handoff.css")).exists()).toBe(true)
   })
 })
 
 describe("multilingual static assets", () => {
   test("the handover room page uses an SDK build that contains the customer locale logic", async () => {
     const html = await Bun.file(pub("live-handover-room.html")).text()
-    const css = /href="(\/css\/qiscus-sdk\.[\d.]+\.css)"/.exec(html)?.[1]
-    const js = /src="(\/js\/qiscus-sdk\.[\d.]+\.js)"/.exec(html)?.[1]
+    const css = /href="(\/css\/qiscus-handoff\.css)"/.exec(html)?.[1]
+    const js = /src="(\/js\/qiscus-handoff\.js)"/.exec(html)?.[1]
     expect(css).toBeDefined()
     expect(js).toBeDefined()
     expect(html).toContain("customerLocale: 'auto'")
-    // CSS and JS must be the same SDK version.
-    expect(css!.match(/qiscus-sdk\.([\d.]+)\.css/)![1]).toBe(js!.match(/qiscus-sdk\.([\d.]+)\.js/)![1])
     const sdk = await Bun.file(pub(js!.slice(1))).text()
     expect(sdk).toContain("customerLocale")
     expect(sdk).toContain("Akhiri chat")
