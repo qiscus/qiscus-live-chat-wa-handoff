@@ -84,6 +84,12 @@ describe("served under a path prefix", () => {
     }
   })
 
+  test("widget.html reads no scriptUrl/baseUrl/iframeUrl override when prefixed", async () => {
+    const html = await Bun.file(pub("widget.html")).text()
+    const body = /function fromQuery\(name\) \{\n([\s\S]*?)\n      \}/.exec(html)?.[1] ?? ""
+    expect(body.trim().startsWith("if (prefixed) return DEFAULTS[name];")).toBe(true)
+  })
+
   test("widget.html defaults the API and the room to its own prefix only when prefixed", async () => {
     const html = await Bun.file(pub("widget.html")).text()
     expect(html).toContain('baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com"')

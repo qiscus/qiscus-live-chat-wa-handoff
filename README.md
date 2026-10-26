@@ -67,6 +67,11 @@ JavaScript or send the invite token to a foreign host. The page passes
 `baseUrl` / `iframeUrl` to `QismoFull` as options, so it works with bundles that
 do not parse those query params themselves.
 
+Served under a path prefix (qismo-api ships these files at `/api/v2/live_handover/w/`), the page
+reads **no** `scriptUrl` / `baseUrl` / `iframeUrl` override: the bundle and the room are the ones
+next to the page and the API is the page's own origin. That host is the agent dashboard's, so a
+crafted link must not be able to load a script from another `*.qiscus.*` host into it.
+
 Never put an app secret or a raw invite token in query parameters.
 
 The selected backend must have the handoff exchange endpoint enabled and must

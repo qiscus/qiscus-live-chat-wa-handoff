@@ -87,7 +87,11 @@
       // scriptUrl/iframeUrl may also point at this page's own origin (bundle and
       // handoff room served by this Worker).
       // Returns the default when absent, null when present but not allowed.
+      // Under a prefix (served by qismo-api on the dashboard's own host) no
+      // override is read at all: a crafted link could otherwise load a script
+      // from another *.qiscus.* host into that origin, or send #t= elsewhere.
       function fromQuery(name) {
+        if (prefixed) return DEFAULTS[name];
         var raw = new URLSearchParams(location.search).get(name);
         if (!raw) return DEFAULTS[name];
         try {
