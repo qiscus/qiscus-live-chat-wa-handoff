@@ -11,6 +11,7 @@
     "build:prod": "npm run build && node build/post-build.js",
     "build-latest": "node build/build-latest.js",
     "lint": "eslint --ext .js,.vue src",
+    "test": "node --test test/*.test.js",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {

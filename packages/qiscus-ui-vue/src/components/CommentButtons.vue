@@ -64,7 +64,18 @@ export default {
         font-family "Open sans", sans-serif
         width 210px
         margin 0 
-        height 48px
+        box-sizing border-box
+        // Rows grow with their text (48px stays the single-line minimum) so wrapped
+        // labels never spill into the next row. pre-wrap keeps the original
+        // newlines/spaces; overflow-wrap breaks unbroken tokens instead of overflowing.
+        // word-wrap is an alias of overflow-wrap, so it stays BEFORE `anywhere`
+        // (later wins) - `anywhere` also shrinks min-content inside flex parents.
+        min-height 48px
+        padding 14px 16px
+        line-height 20px
+        white-space pre-wrap
+        word-wrap break-word
+        overflow-wrap anywhere
         border 0
         color $darkGrey
         text-transform capitalize
@@ -72,7 +83,6 @@ export default {
         display block 
         width 100%
       a
-        line-height 48px
         text-align center
   
   .button-message__redownload
@@ -96,6 +106,8 @@ export default {
             align-items: center
             color: #23B098
             height: auto
+            padding-left: 6px
+            padding-right: 6px
             line-height: 22px
             text-decoration: underline
             font-size: 14px
