@@ -517,7 +517,7 @@ export function start(opts: { baseUrl?: string }): HandoffPushApi {
   // qismo-api at this page's validated baseUrl: never from the URL query or a
   // message. Without a (valid) baseUrl, e.g. an old cached widget.html, only
   // the Worker env applies.
-  const base = opts.baseUrl ? parseBaseUrl(opts.baseUrl) : null
+  const base = opts.baseUrl ? parseBaseUrl(opts.baseUrl, BASE === "/" ? undefined : location.origin) : null
   let envConfigPromise: Promise<PushConfig> | null = null
   const envConfig = () => (envConfigPromise ??= loadEnvConfig().catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] })))
   const appConfigs = new Map<string, Promise<PushConfig>>()

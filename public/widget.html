@@ -59,9 +59,12 @@
        * Overrides only accept Qiscus hosts or localhost; otherwise a crafted link
        * could run foreign JS or send the invite token elsewhere.
        */
+      // Served under a path prefix means qismo-api is proxying this app: the API is then
+      // this page's own origin, which is the default and is accepted as baseUrl.
+      var prefixed = new URL(".", location.href).pathname !== "/";
       var DEFAULTS = {
         scriptUrl: new URL("js/qismo-full-v5.js", location.href).href,
-        baseUrl: "https://qismo.qiscus.com",
+        baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com",
         // The room is served next to this page, under the same path prefix (no trailing slash:
         // QismoFull appends "/iframes/v5/...").
         iframeUrl: new URL(".", location.href).href.replace(/\/$/, ""),
@@ -134,8 +137,8 @@
       };
 
       // Query override, restricted to Qiscus hosts over HTTPS or localhost;
-      // scriptUrl/iframeUrl may also point at this page's own origin (bundle and
-      // handoff room served by this Worker).
+      // scriptUrl may also point at this page's own origin (bundle served by this
+      // Worker), and so may baseUrl when served under a path prefix (see DEFAULTS).
       // Returns the default when absent, null when present but not allowed.
       function fromQuery(name) {
         var raw = new URLSearchParams(location.search).get(name);
@@ -145,7 +148,7 @@
           var host = url.hostname;
           var local = host === "localhost" || host === "127.0.0.1";
           var qiscus = /(^|\.)qiscus\.(com|io)$/.test(host);
-          var self = name === "scriptUrl" && url.origin === location.origin;
+          var self = (name === "scriptUrl" || (name === "baseUrl" && prefixed)) && url.origin === location.origin;
           if (self || (url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
             return name === "scriptUrl" ? url.href : url.origin;
           }

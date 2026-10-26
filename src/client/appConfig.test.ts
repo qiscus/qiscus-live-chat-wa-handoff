@@ -20,6 +20,15 @@ async function goodBody(over: Record<string, unknown> = {}) {
   }
 }
 
+describe("parseBaseUrl under a path prefix", () => {
+  test("the page's own origin is accepted only when a prefix is in use", () => {
+    expect(parseBaseUrl("https://qismo.customer.example", "https://qismo.customer.example")).toBe("https://qismo.customer.example")
+    expect(parseBaseUrl("https://qismo.customer.example")).toBeNull()
+    expect(parseBaseUrl("https://other.example", "https://qismo.customer.example")).toBeNull()
+    expect(parseBaseUrl("https://qismo-stag2.qiscus.io/api", "https://qismo.customer.example")).toBe("https://qismo-stag2.qiscus.io")
+  })
+})
+
 describe("parseBaseUrl: same allowlist as widget.html", () => {
   test("accepts Qiscus https hosts and localhost, returns the bare origin", () => {
     expect(parseBaseUrl("https://qismo.qiscus.com")).toBe("https://qismo.qiscus.com")

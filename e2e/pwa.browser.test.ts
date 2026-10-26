@@ -950,7 +950,9 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         page.on("response", (r) => {
           if (new URL(r.url()).origin === PROXY && r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`)
         })
-        await page.goto(`${PROXY}${PREFIX}/widget.html?baseUrl=${encodeURIComponent(PROXY)}#t=synthetic-invite-A`)
+        // no ?baseUrl: under a prefix the API is the page's own origin
+        // no ?baseUrl: under a prefix the API is the page's own origin
+        await page.goto(`${PROXY}${PREFIX}/widget.html#t=synthetic-invite-A`)
         await waitPushState(page, "offer")
 
         // the room iframe, the manifest and every asset resolved under the prefix

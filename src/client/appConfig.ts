@@ -35,10 +35,15 @@ export interface AppPushConfig {
  * widget.html's allowlist for `baseUrl`, re-applied here because this bundle
  * must not trust the page to have done it: https on qiscus.com / qiscus.io
  * (and subdomains), or localhost / 127.0.0.1 over http(s). Returns the origin.
+ *
+ * `selfOrigin` is passed only when qismo-api serves this app under a path prefix
+ * (see base.ts): then the page's own origin is the API itself and is accepted
+ * whatever its host is, e.g. a custom domain.
  */
-export function parseBaseUrl(raw: string): string | null {
+export function parseBaseUrl(raw: string, selfOrigin?: string): string | null {
   try {
     const url = new URL(raw)
+    if (selfOrigin && url.origin === selfOrigin) return url.origin
     const local = url.hostname === "localhost" || url.hostname === "127.0.0.1"
     if ((url.protocol === "https:" && QISCUS_HOST.test(url.hostname)) || (local && /^https?:$/.test(url.protocol))) return url.origin
   } catch {}
