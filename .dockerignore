@@ -10,3 +10,5 @@ e2e
 !README.md
 Dockerfile
 .dockerignore
+# source maps are for local debugging; the container is a production build
+**/*.map
