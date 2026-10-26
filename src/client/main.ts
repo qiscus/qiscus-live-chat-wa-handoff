@@ -16,13 +16,16 @@
  */
 import type { PushConfig } from "../push/config"
 import { type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
+import { basePathOf } from "./base"
 import { parseInviteLink } from "./inviteLink"
 import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
 import { detectSupport, probeBrowser } from "./support"
 import { writeSwContext } from "./swContext"
 
-const SW_URL = "/sw.js"
-const FIREBASE_MODULE = "/js/push/firebase.js"
+// Path prefix this page is served under ("/" at a domain root; see base.ts).
+const BASE = typeof location === "undefined" ? "/" : basePathOf(location.href)
+const SW_URL = `${BASE}sw.js`
+const FIREBASE_MODULE = `${BASE}js/push/firebase.js`
 const DISMISS_KEY = "qiscus-handoff:push-dismissed:v1"
 const IFRAME_ID = "qcw-iframe"
 
@@ -49,7 +52,7 @@ function registerSw(): Promise<ServiceWorkerRegistration> {
     // updateViaCache "none": the update check never goes through the HTTP
     // cache, so a deployed sw.js is seen on the very next check.
     swRegistration = navigator.serviceWorker
-      .register(SW_URL, { scope: "/", updateViaCache: "none" })
+      .register(SW_URL, { scope: BASE, updateViaCache: "none" })
       .then((reg) => {
         debug("sw registered", { scope: reg.scope, active: !!reg.active, waiting: !!reg.waiting })
         swLastUpdate = Date.now()
@@ -117,7 +120,7 @@ const fcm: Fcm = {
 }
 
 async function loadConfig(): Promise<PushConfig> {
-  const res = await fetch("/push/config", { cache: "no-store", credentials: "same-origin" })
+  const res = await fetch(`${BASE}push/config`, { cache: "no-store", credentials: "same-origin" })
   const body = (await res.json()) as PushConfig
   if (body && (body.status === "configured" || body.status === "unconfigured")) return body
   return { status: "unconfigured", missing: [], invalid: [] }
@@ -461,7 +464,7 @@ function createUi(actions: { enable(): void; disable(): void }) {
     const go = button(
       TEXT.pasteGo,
       () => {
-        const token = parseInviteLink(input.value, location.origin)
+        const token = parseInviteLink(input.value, location.origin, `${BASE}widget.html`)
         input.value = ""
         if (!token) {
           err.textContent = TEXT.pasteBad
@@ -725,7 +728,7 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
       frame.setAttribute("allow", "clipboard-write")
       const app = encodeURIComponent(session.appId)
       // No token or user data in this URL: the room reads the stored session.
-      frame.src = `/iframes/v5/${app}/live-handover-room?resume=1&app_id=${app}`
+      frame.src = `${BASE}iframes/v5/${app}/live-handover-room?resume=1&app_id=${app}`
       document.body.appendChild(frame)
     },
     offerPasteLink() {
@@ -733,7 +736,7 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
       ui.showPasteForm((token) => {
         // Same transport as the normal invite: the fragment, which QismoFull
         // strips before the exchange and which never reaches a server.
-        history.replaceState(null, "", `/widget.html${location.search}#t=${encodeURIComponent(token)}`)
+        history.replaceState(null, "", `${BASE}widget.html${location.search}#t=${encodeURIComponent(token)}`)
         location.reload()
       })
       return true

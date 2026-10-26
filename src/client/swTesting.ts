@@ -63,7 +63,7 @@ export interface SwHarness {
   fetchCalls: string[]
 }
 
-export async function loadServiceWorker(source: string, origin = "https://handoff.example.invalid"): Promise<SwHarness> {
+export async function loadServiceWorker(source: string, origin = "https://handoff.example.invalid", scope = "/"): Promise<SwHarness> {
   const listeners = new Map<string, Listener[]>()
   const shown: SwHarness["shown"] = []
   const opened: string[] = []
@@ -74,7 +74,7 @@ export async function loadServiceWorker(source: string, origin = "https://handof
   const fetchCalls: string[] = []
 
   const registration = {
-    scope: origin + "/",
+    scope: origin + scope,
     async showNotification(title: string, options: any) {
       shown.push({ title, options, closed: false })
     },
@@ -85,7 +85,7 @@ export async function loadServiceWorker(source: string, origin = "https://handof
     },
   }
   const self: any = {
-    location: new URL(origin + "/sw.js"),
+    location: new URL(origin + scope + "sw.js"),
     registration,
     addEventListener(type: string, fn: Listener) {
       if (!listeners.has(type)) listeners.set(type, [])
