@@ -100,8 +100,17 @@ export function isVapidPublicKey(value: string): boolean {
   return !!bytes && bytes.length === 65 && bytes[0] === 0x04
 }
 
-/** A bare https origin (http only for localhost), or null. Paths, queries and credentials are refused. */
+/**
+ * A bare https origin (http only for localhost), or a wildcard such as
+ * `https://*.qiscus.io` (https only), or null. A wildcard matches any subdomain
+ * of the given host, never the host itself, so `https://*.qiscus.io` covers
+ * qismo-stag2.qiscus.io, qismo-stag3.qiscus.io, ... without a deploy per host.
+ * Paths, queries, credentials and ports on wildcards are refused.
+ */
 function asRoomOrigin(value: string): string | null {
+  const wild = /^https:\/\/\*\.([^/?#:@*]+)$/.exec(value)
+  if (wild) return HOSTNAME.test(wild[1]) && wild[1].includes(".") ? `https://*.${wild[1].toLowerCase()}` : null
+  if (value.includes("*")) return null // a wildcard is only valid as the whole leftmost label
   let url: URL
   try {
     url = new URL(value)
@@ -113,6 +122,23 @@ function asRoomOrigin(value: string): string | null {
   if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null
   if (value.replace(/\/$/, "") !== url.origin) return null
   return url.origin
+}
+
+/** True when `origin` equals an allowed entry or is a subdomain matched by a `https://*.host` entry. */
+export function roomOriginAllowed(origin: string | null | undefined, allowed: readonly string[]): boolean {
+  if (!origin) return false
+  let url: URL
+  try {
+    url = new URL(origin)
+  } catch {
+    return false
+  }
+  if (url.origin !== origin) return false
+  return allowed.some((entry) => {
+    if (entry === origin) return true
+    const wild = /^https:\/\/\*\.(.+)$/.exec(entry)
+    return !!wild && url.protocol === "https:" && url.port === "" && url.hostname.endsWith(`.${wild[1]}`) && HOSTNAME.test(url.hostname)
+  })
 }
 
 /**

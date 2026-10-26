@@ -131,7 +131,7 @@ or in the Worker.
 | `FIREBASE_VAPID_KEY`           | Project settings → Cloud Messaging → Web Push certificates (public key) |
 | `FIREBASE_AUTH_DOMAIN`         | optional                                                              |
 | `PUSH_APP_CODES`               | optional, comma-separated Qiscus app codes allowed to enable push     |
-| `PUSH_ROOM_ORIGINS`            | optional, TEMPORARY: comma-separated origins of a cross-origin room iframe for which push is still allowed (see Limitations) |
+| `PUSH_ROOM_ORIGINS`            | optional, TEMPORARY: comma-separated origins of a cross-origin room iframe for which push is still allowed (see Limitations). An entry may be a wildcard `https://*.qiscus.io`: it matches every subdomain (qismo-stag2, -stag3, ...) but not the apex, other ports, or http, so a new staging host needs no env change |
 
 If any required value is missing or malformed, push stays off. `GET
 /push/config` returns `{"status":"unconfigured","missing":[…],"invalid":[…]}`

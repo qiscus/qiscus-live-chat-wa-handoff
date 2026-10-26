@@ -316,6 +316,13 @@ describe("PushController (synthetic)", () => {
   const ROOM = "https://omnichannel.example.invalid"
   const seen = { appId: "app1", roomId: "77", identityToken: "synthetic-identity-token" }
 
+  test("cross-origin room matched by a wildcard entry is adopted like a listed one", async () => {
+    const h = harness({ config: { ...CONFIG, roomOrigins: ["https://*.example.invalid"] } as PushConfig })
+    await h.ctl.crossOriginRoom({ origin: "https://stag9.example.invalid", exchange: seen })
+    expect(h.sdkCalls.map((c) => c.path)).toContain("verify_identity_token")
+    expect(loadSession(h.storage, h.nowFn()).state).toBe("valid")
+  })
+
   test("cross-origin room NOT in roomOrigins: reported, no SDK call, nothing stored", async () => {
     const h = harness({ config: { ...CONFIG, roomOrigins: ["https://other.example.invalid"] } as PushConfig })
     await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })

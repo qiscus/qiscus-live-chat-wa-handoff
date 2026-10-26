@@ -16,7 +16,7 @@
  *    revoked permission remove it as well;
  *  - nothing is registered without the user's explicit click on this device.
  */
-import type { PushConfig } from "../push/config"
+import { type PushConfig, roomOriginAllowed } from "../push/config"
 import { removeDeviceToken, setDeviceToken, verifyIdentityToken } from "./sdkDeviceToken"
 import {
   type KeyValueStorage,
@@ -143,7 +143,7 @@ export class PushController {
   async crossOriginRoom(room?: { origin: string | null; exchange: ExchangeCapture | null }): Promise<void> {
     const cfg = await this.config(room?.exchange?.appId)
     const origin = room?.origin ?? null
-    const allowed = cfg.status === "configured" && !!origin && cfg.roomOrigins.includes(origin)
+    const allowed = cfg.status === "configured" && roomOriginAllowed(origin, cfg.roomOrigins)
     if (!allowed || !room?.exchange) {
       this.log("cross-origin room not adopted", {
         origin,
