@@ -90,6 +90,16 @@ describe("served under a path prefix", () => {
     expect(body.trim().startsWith("if (prefixed) return DEFAULTS[name];")).toBe(true)
   })
 
+  test("widget.html stops the bundle reading the query when prefixed", async () => {
+    // qismo-full-v5.js reads ?baseUrl=/?iframeUrl= ahead of its options unless
+    // readQueryParams is false (packages/qismo-widget/src/FullWidget.svelte).
+    const html = await Bun.file(pub("widget.html")).text()
+    const props = /new QismoFull\(\{[\s\S]*?props: \{([\s\S]*?)onEvent:/.exec(html)?.[1] ?? ""
+    expect(props).toContain("readQueryParams: !prefixed,")
+    const bundle = await Bun.file(pub("js/qismo-full-v5.js")).text()
+    expect(bundle).toContain("readQueryParams")
+  })
+
   test("widget.html defaults the API and the room to its own prefix only when prefixed", async () => {
     const html = await Bun.file(pub("widget.html")).text()
     expect(html).toContain('baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com"')

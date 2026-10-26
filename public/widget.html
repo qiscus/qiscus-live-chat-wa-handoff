@@ -125,6 +125,10 @@
           target: document.body,
           props: {
             staging: false,
+            // The bundle reads baseUrl/iframeUrl (and channel_id, display_name,
+            // unique_id, extra_fields) from the query too, ahead of these
+            // options. Under a prefix that would undo fromQuery() above.
+            readQueryParams: !prefixed,
             options: { baseUrl: env.baseUrl, qismoIframeUrl: env.iframeUrl },
             onEvent: function (event) {
               if (event.event_name === "qiscus:handoff-ready") {

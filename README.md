@@ -70,7 +70,11 @@ do not parse those query params themselves.
 Served under a path prefix (qismo-api ships these files at `/api/v2/live_handover/w/`), the page
 reads **no** `scriptUrl` / `baseUrl` / `iframeUrl` override: the bundle and the room are the ones
 next to the page and the API is the page's own origin. That host is the agent dashboard's, so a
-crafted link must not be able to load a script from another `*.qiscus.*` host into it.
+crafted link must not be able to load a script from another `*.qiscus.*` host into it, nor send the
+invite token to another API. The page also mounts `QismoFull` with `readQueryParams: false` there:
+the bundle otherwise reads `baseUrl` / `iframeUrl` (allowlisted Qiscus origins, staging included)
+from the query ahead of the options the page passes, plus `channel_id` / `display_name` /
+`unique_id` / `extra_fields`. At a domain root nothing changes.
 
 Never put an app secret or a raw invite token in query parameters.
 
