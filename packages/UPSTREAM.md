@@ -27,6 +27,18 @@ Nothing else was changed at the fork commit.
   packages' own build scripts unchanged under Node 16.15.1 (`.nvmrc`) and
   copies only the files above into `public/`.
 
+## Reviewed against MCF master, not ported
+
+Checked 2026-10-26 against MCF `origin/master` `9125f1c14` (fork point `e33d0a9a2`). Each item
+touches code the handoff page does not load (`FullWidget.svelte` and the room page only):
+
+- PR #2445 `bugfix/qismo-v5-null-channel-widget`: guards a null `channel_widget` in `App.svelte`
+  (the general widget, `qismo-v5.js`). `FullWidget.svelte` never reads `live_channel`.
+- PR #2444 `fix/ads-tracker-no-data-spinner`: `AdsTrackerConverter.vue`, an inbox feature.
+- `fix/widget-logout-clear-qws`, `fix/widget-logout-site-storage` (not merged in MCF): logout in
+  `App.svelte`/`main.js`. `FullWidget.svelte` has no logout.
+- `fix/1638-safari-guard-handoff-pages` (not merged in MCF): Blade/PHP browser guard for dashboard pages.
+
 ## Port log
 
 | Date | MCF commit | What |
