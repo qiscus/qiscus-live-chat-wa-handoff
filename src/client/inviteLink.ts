@@ -42,7 +42,6 @@ export function parseInviteLink(input: string, selfOrigin: string): string | nul
 
 export interface InviteEnv {
   baseUrl?: string
-  iframeUrl?: string
 }
 
 function isLocal(url: URL): boolean {
@@ -55,12 +54,12 @@ function isQiscusHttps(url: URL): boolean {
 
 /**
  * The environment a pasted widget link points at (`baseUrl` = the qismo-api the
- * token belongs to, `iframeUrl` = the room host). The Home Screen app starts at
- * `/widget.html?source=pwa`, without these, so a token minted on another
- * environment would otherwise be exchanged against the production default and
- * refused. Same rules as widget.html's `fromQuery`: baseUrl only on https
- * Qiscus hosts (or localhost); iframeUrl also on this page's own origin.
- * Only this page's own link form can carry them; anything refused is dropped.
+ * token belongs to). The Home Screen app starts at `/widget.html?source=pwa`,
+ * without it, so a token minted on another environment would otherwise be
+ * exchanged against the production default and refused. Same rule as
+ * widget.html's `fromQuery`: only https Qiscus hosts (or localhost). The room
+ * host is always this page's own origin, so a pasted `iframeUrl` is ignored.
+ * Only this page's own link form can carry it; anything refused is dropped.
  */
 export function parseInviteEnv(input: string, selfOrigin: string): InviteEnv {
   let url: URL
@@ -71,18 +70,11 @@ export function parseInviteEnv(input: string, selfOrigin: string): InviteEnv {
   }
   if (url.origin !== selfOrigin || url.pathname !== "/widget.html") return {}
   const env: InviteEnv = {}
-  const pick = (name: string, allowSelf: boolean): string | undefined => {
-    const raw = url.searchParams.get(name)
-    if (!raw) return undefined
-    try {
-      const u = new URL(raw, selfOrigin)
-      if ((allowSelf && u.origin === selfOrigin) || isQiscusHttps(u) || isLocal(u)) return u.origin
-    } catch {}
-    return undefined
-  }
-  const baseUrl = pick("baseUrl", false)
-  const iframeUrl = pick("iframeUrl", true)
-  if (baseUrl) env.baseUrl = baseUrl
-  if (iframeUrl) env.iframeUrl = iframeUrl
+  const raw = url.searchParams.get("baseUrl")
+  if (!raw) return env
+  try {
+    const u = new URL(raw, selfOrigin)
+    if (isQiscusHttps(u) || isLocal(u)) env.baseUrl = u.origin
+  } catch {}
   return env
 }

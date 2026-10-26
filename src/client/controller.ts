@@ -16,8 +16,8 @@
  *    revoked permission remove it as well;
  *  - nothing is registered without the user's explicit click on this device.
  */
-import { type PushConfig, roomOriginAllowed } from "../push/config"
-import { removeDeviceToken, setDeviceToken, verifyIdentityToken } from "./sdkDeviceToken"
+import type { PushConfig } from "../push/config"
+import { removeDeviceToken, setDeviceToken } from "./sdkDeviceToken"
 import {
   type KeyValueStorage,
   type StoredSession,
@@ -42,20 +42,12 @@ export type PushUiState =
   | { kind: "ios-install" }
   | { kind: "ios-open-safari" }
   | { kind: "android-open-browser" }
-  | { kind: "cross-origin-room" }
   | { kind: "app-not-enabled" }
   | { kind: "offer" }
   | { kind: "busy" }
   | { kind: "enabled" }
   | { kind: "denied" }
   | { kind: "error"; reason: string; detail?: string }
-
-/** What the page saw of the invite exchange. In memory only, never stored. */
-export interface ExchangeCapture {
-  appId: string
-  roomId: string
-  identityToken: string
-}
 
 /**
  * A short, display-safe description of a thrown error, for the on-page error
@@ -132,45 +124,6 @@ export class PushController {
   async inviteFailed(): Promise<void> {
     await this.teardownPrevious()
     this.emit({ kind: "hidden" })
-  }
-
-  /**
-   * The room iframe is not on this origin, so its SDK login is unreachable.
-   * TEMPORARY: when that origin is in the config's roomOrigins and the page saw
-   * the exchange, the page verifies the identity token itself and continues as
-   * if a same-origin room had stored the session.
-   */
-  async crossOriginRoom(room?: { origin: string | null; exchange: ExchangeCapture | null }): Promise<void> {
-    const cfg = await this.config(room?.exchange?.appId)
-    const origin = room?.origin ?? null
-    const allowed = cfg.status === "configured" && roomOriginAllowed(origin, cfg.roomOrigins)
-    if (!allowed || !room?.exchange) {
-      this.log("cross-origin room not adopted", {
-        origin,
-        allowedOrigins: cfg.status === "configured" ? cfg.roomOrigins : [],
-        exchangeSeen: !!room?.exchange,
-      })
-      await this.teardownPrevious()
-      this.emit({ kind: "cross-origin-room" })
-      return
-    }
-    const { appId, roomId, identityToken } = room.exchange
-    const r = await verifyIdentityToken(this.deps.fetch, appId, identityToken)
-    this.log("verify_identity_token (cross-origin room)", { ok: r.ok, status: r.status, error: r.error, appId, roomId })
-    if (!r.ok || !r.user) {
-      await this.teardownPrevious()
-      this.emit({ kind: "cross-origin-room" })
-      return
-    }
-    try {
-      saveSession(this.deps.storage, { appId, roomId, user: r.user }, this.deps.now())
-    } catch (e) {
-      this.log("cross-origin session not stored", String(e))
-      await this.teardownPrevious()
-      this.emit({ kind: "cross-origin-room" })
-      return
-    }
-    await this.sessionReady()
   }
 
   /** The same-origin room logged in and stored the session. */

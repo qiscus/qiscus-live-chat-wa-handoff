@@ -113,7 +113,6 @@ describe("resolveAppConfig: precedence", () => {
     firebase: { apiKey: "AIza" + "E".repeat(35), projectId: "env-project", messagingSenderId: "111111111111", appId: "1:111111111111:web:abcdef012345" },
     vapidKey: "env-vapid",
     appCodes: ["weaper"],
-    roomOrigins: ["https://omnichannel.qiscus.com"],
     ...over,
   }) as PushConfig
   const envOff: PushConfig = { status: "unconfigured", missing: ["FIREBASE_API_KEY"], invalid: [] }
@@ -125,10 +124,6 @@ describe("resolveAppConfig: precedence", () => {
   })
   test("backend wins even when env PUSH_APP_CODES does not list the app", () => {
     expect(resolveAppConfig(envConfigured({ appCodes: ["weaper"] }), be, "app2").status).toBe("configured")
-  })
-  test("room origins still come from env (the backend does not provide them)", () => {
-    expect((resolveAppConfig(envConfigured(), be, "app2") as { roomOrigins: string[] }).roomOrigins).toEqual(["https://omnichannel.qiscus.com"])
-    expect((resolveAppConfig(envOff, be, "app2") as { roomOrigins: string[] }).roomOrigins).toEqual([])
   })
   test("no backend config -> the env result, untouched (Weaper keeps the root scope)", () => {
     const env = envConfigured()

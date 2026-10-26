@@ -10,7 +10,8 @@
  *
  * `widget.html` (static asset, served at `/widget.html`) does the actual
  * work: it loads the bundled script and passes production API/iframe
- * defaults (overridable via `?baseUrl=`, `?iframeUrl=`, `?scriptUrl=`).
+ * defaults (the API host is overridable via `?baseUrl=`; the bundle and the
+ * room iframe always come from this Worker).
  *
  * This Worker itself only serves `/` (a landing note), the handoff room at
  * `/iframes/v5/:app_code/live-handover-room`, `GET /push/config` (public FCM
@@ -76,9 +77,9 @@ app.get("/", (c) => {
   hanya menerima invite yang sudah dibuat backend; tidak membuat invite atau
   mengirim pesan WhatsApp.</p>
   <p>Atur <code>page_url</code> ke
-  <code>/widget.html</code>. Bundle, API, dan iframe memakai host staging2
-  sementara fitur belum dipromosikan. Setelah promosi, ganti host ke production.
-  Override <code>baseUrl</code> dan <code>iframeUrl</code> via query parameter.</p>
+  <code>/widget.html</code>. Bundle dan iframe room selalu dilayani Worker ini;
+  API memakai production kecuali di-override lewat query parameter
+  <code>baseUrl</code> (mis. host staging).</p>
   <p>Backend menambahkan token sekali-pakai di fragment <code>#t=...</code> saat
   membuat link. Jangan menambahkan token secara manual.</p>
 </body>

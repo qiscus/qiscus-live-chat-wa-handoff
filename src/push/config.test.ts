@@ -1,7 +1,7 @@
 // SYNTHETIC: every value below is invented for tests. None is a real Firebase
 // project, API key or VAPID key.
 import { describe, expect, test } from "bun:test"
-import { PUSH_ENV_KEYS, readPushConfig, roomOriginAllowed } from "./config"
+import { PUSH_ENV_KEYS, readPushConfig } from "./config"
 
 async function syntheticVapidKey(): Promise<string> {
   const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
@@ -102,35 +102,6 @@ describe("readPushConfig (synthetic)", () => {
     expect(cfg.invalid).toEqual(["PUSH_APP_CODES"])
   })
 
-  test("PUSH_ROOM_ORIGINS accepts a https wildcard and matches only its subdomains", async () => {
-    const cfg = readPushConfig({ ...(await syntheticEnv()), PUSH_ROOM_ORIGINS: "https://omnichannel.qiscus.com, https://*.qiscus.io" })
-    if (cfg.status !== "configured") throw new Error("unreachable")
-    expect(cfg.roomOrigins).toEqual(["https://omnichannel.qiscus.com", "https://*.qiscus.io"])
-    for (const ok of ["https://omnichannel.qiscus.com", "https://qismo-stag2.qiscus.io", "https://qismo-stag3.qiscus.io", "https://a.b.qiscus.io"])
-      expect(roomOriginAllowed(ok, cfg.roomOrigins)).toBe(true)
-    for (const no of [
-      "https://qiscus.io", // the apex itself is not a subdomain
-      "https://evilqiscus.io",
-      "https://qiscus.io.evil.example",
-      "https://qismo-stag2.qiscus.io:8443",
-      "http://qismo-stag2.qiscus.io",
-      "https://qismo-stag2.qiscus.com",
-      "https://qismo-stag2.qiscus.io/path",
-      "",
-      null,
-    ])
-      expect(roomOriginAllowed(no, cfg.roomOrigins)).toBe(false)
-  })
-
-  test("PUSH_ROOM_ORIGINS refuses malformed wildcards", async () => {
-    const env = await syntheticEnv()
-    for (const bad of ["https://*", "https://*.com", "http://*.qiscus.io", "https://*.qiscus.io/x", "https://a.*.qiscus.io", "https://*.qiscus.io:8443", "*.qiscus.io"]) {
-      const cfg = readPushConfig({ ...env, PUSH_ROOM_ORIGINS: bad })
-      expect(cfg.status).toBe("unconfigured")
-      if (cfg.status === "unconfigured") expect(cfg.invalid).toEqual(["PUSH_ROOM_ORIGINS"])
-    }
-  })
-
   test("PUSH_ENV_KEYS lists every env name the Worker reads", () => {
     expect([...PUSH_ENV_KEYS].sort() as string[]).toEqual(
       [
@@ -141,7 +112,6 @@ describe("readPushConfig (synthetic)", () => {
         "FIREBASE_APP_ID",
         "FIREBASE_VAPID_KEY",
         "PUSH_APP_CODES",
-        "PUSH_ROOM_ORIGINS",
       ].sort(),
     )
   })

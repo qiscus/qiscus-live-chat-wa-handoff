@@ -19,7 +19,7 @@
  */
 import type { PushConfig } from "../push/config"
 import { QISCUS_HOST, fetchAppPushConfig, parseBaseUrl, resolveAppConfig } from "./appConfig"
-import { type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
+import { type ConfiguredPushConfig, PushController, type PushDeps, type PushUiState } from "./controller"
 import { parseInviteEnv, parseInviteLink, type InviteEnv } from "./inviteLink"
 import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
 import { detectSupport, probeBrowser } from "./support"
@@ -419,9 +419,6 @@ function createUi(actions: { enable(): void; disable(): void }) {
         // Not a customer-facing condition; visible to operators in the console.
         console.info("[handoff-push] push is not configured; missing:", state.missing.join(", ") || "-", "invalid:", state.invalid.join(", ") || "-")
         return null
-      case "cross-origin-room":
-        console.info("[handoff-push] push off: the room iframe is on another origin and is not in PUSH_ROOM_ORIGINS (or its exchange was not seen)")
-        return null
       case "app-not-enabled":
         console.info("[handoff-push] push off: this app has no backend push config and is not in PUSH_APP_CODES")
         return null
@@ -509,70 +506,7 @@ function isStandalone(): boolean {
   return nav.standalone === true || !!window.matchMedia?.("(display-mode: standalone)").matches
 }
 
-// ------------------------------------------------------ exchange observation
-
-const EXCHANGE_PATH = "/api/v2/live_handover/exchange"
-
-/** A POST to the Qiscus handoff exchange endpoint (QismoFull's own request). */
-export function isExchangeRequest(method: string, url: string, base: string): boolean {
-  if (String(method).toUpperCase() !== "POST") return false
-  try {
-    const u = new URL(url, base)
-    return u.protocol === "https:" && QISCUS_HOST.test(u.hostname) && u.pathname === EXCHANGE_PATH
-  } catch {
-    return false
-  }
-}
-
-/** The fields push needs from an exchange response body, or null. */
-export function parseExchange(raw: string): ExchangeCapture | null {
-  try {
-    const j = JSON.parse(raw) as Record<string, unknown> & { data?: Record<string, unknown> }
-    const d = (j && typeof j.data === "object" && j.data) || j
-    const appId = d.app_code
-    const roomId = d.room_id == null ? "" : String(d.room_id)
-    const identityToken = d.identity_token
-    if (typeof appId !== "string" || !APP_CODE_RE.test(appId)) return null
-    if (!ROOM_ID_RE.test(roomId)) return null
-    if (typeof identityToken !== "string" || !identityToken || identityToken.length > 8192) return null
-    return { appId, roomId, identityToken }
-  } catch {
-    return null
-  }
-}
-
-/**
- * QismoFull exchanges the invite with XMLHttpRequest and hands the identity
- * token only to the room iframe. With a cross-origin room that is the only
- * moment the page can learn it, so the page reads that one response. Kept in
- * memory, used once, never stored or logged.
- */
-function observeExchange(onCapture: (c: ExchangeCapture) => void): void {
-  if (typeof XMLHttpRequest === "undefined") return
-  const proto = XMLHttpRequest.prototype as XMLHttpRequest & { __handoffObserved?: boolean }
-  if (proto.__handoffObserved) return
-  proto.__handoffObserved = true
-  const open = proto.open
-  const send = proto.send
-  const marked = new WeakSet<XMLHttpRequest>()
-  proto.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-    if (isExchangeRequest(method, String(url), location.href)) marked.add(this)
-    return (open as (...a: unknown[]) => void).apply(this, [method, url, ...rest])
-  } as typeof proto.open
-  proto.send = function (this: XMLHttpRequest, ...args: unknown[]) {
-    if (marked.has(this)) {
-      this.addEventListener("load", () => {
-        if (this.status < 200 || this.status >= 300) return debug("exchange answered", this.status)
-        const c = parseExchange(typeof this.responseText === "string" ? this.responseText : "")
-        debug("exchange seen", c ? { appId: c.appId, roomId: c.roomId } : "unparsed")
-        if (c) onCapture(c)
-      })
-    }
-    return (send as (...a: unknown[]) => void).apply(this, args)
-  } as typeof proto.send
-}
-
-export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPushApi {
+export function start(opts: { baseUrl?: string }): HandoffPushApi {
   let resuming = false
   let resumeHandlers: { onReady(): void; onFailed(): void } | null = null
 
@@ -597,11 +531,6 @@ export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPus
     return cfg
   }
 
-  let iframeOrigin: string | null = null
-  try {
-    iframeOrigin = new URL(opts.iframeUrl, location.href).origin
-  } catch {}
-
   const ui = createUi({ enable: () => void ctl.enable(), disable: () => void ctl.disable() })
 
   const ctl = new PushController({
@@ -614,8 +543,8 @@ export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPus
     loadConfig,
     // A notification click reopens THIS page's backend (the page itself, validated), not the defaults.
     resumeUrl: () => {
-      if (!base || !iframeOrigin) return undefined
-      return `/widget.html?${new URLSearchParams({ source: "notification", baseUrl: base, iframeUrl: iframeOrigin })}`
+      if (!base) return undefined
+      return `/widget.html?${new URLSearchParams({ source: "notification", baseUrl: base })}`
     },
     fcm,
     swContext: { write: (ctx, scope) => writeSwContext(indexedDB, ctx ? { ...ctx, locale: LOCALE } : null, scope) },
@@ -634,69 +563,13 @@ export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPus
     debug("service worker unavailable", { secure: window.isSecureContext })
   }
 
-  debug("start", { page: location.origin, room: iframeOrigin, sameOrigin: iframeOrigin === location.origin })
-
-  let exchange: ExchangeCapture | null = null
-  let crossOriginAdopted = false
-  if (iframeOrigin !== location.origin) observeExchange((c) => (exchange = c))
-
-  // Apps enabled for push (backend config for the app, else PUSH_APP_CODES)
-  // get OUR copy of the room even on a first invite,
-  // so push guidance can be a local-only bubble inside the chat (a
-  // cross-origin room can only get the floating banner). QismoFull learns the
-  // app code from the exchange and appends the room iframe at once; we move
-  // that iframe to this origin with the same path and query (our room page
-  // reads the same parameters). Until the config is known the frame is held
-  // on about:blank, so the remote room never starts and never spends the
-  // single-use identity token.
-  let roomSwap: Promise<boolean> | null = null
-  if (iframeOrigin && iframeOrigin !== location.origin) {
-    const swap = async (frame: HTMLIFrameElement): Promise<boolean> => {
-      let url: URL
-      try {
-        url = new URL(frame.src)
-      } catch {
-        return false
-      }
-      const m = /^\/iframes\/v5\/([^/]+)\/live-handover-room$/.exec(url.pathname)
-      if (url.origin !== iframeOrigin || !m) return false
-      const original = frame.src
-      frame.src = "about:blank"
-      // The app code is in the iframe path QismoFull built from the exchange,
-      // so per-app config can be fetched before the room is mounted.
-      const app = decodeURIComponent(m[1]!)
-      const cfg = await loadConfig(APP_CODE_RE.test(app) ? app : undefined).catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] }))
-      const ours = cfg.status === "configured" && !!cfg.appCodes && cfg.appCodes.includes(app)
-      frame.src = ours ? location.origin + url.pathname + url.search : original
-      debug("room iframe", ours ? "moved to this origin (app enabled for push)" : "kept on " + iframeOrigin)
-      return ours
-    }
-    const watch = new MutationObserver((records) => {
-      for (const r of records)
-        for (const n of r.addedNodes)
-          if (n instanceof HTMLIFrameElement && n.id === IFRAME_ID && !roomSwap) {
-            roomSwap = swap(n)
-            watch.disconnect()
-            return
-          }
-    })
-    const observe = () => watch.observe(document.body, { childList: true })
-    if (document.body) observe()
-    else document.addEventListener("DOMContentLoaded", observe)
-  }
+  debug("start", { page: location.origin })
 
   window.addEventListener("message", (e: MessageEvent) => {
     const frame = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null
     if (!frame || e.source !== frame.contentWindow) return
     const name = e.data && typeof e.data === "object" ? (e.data as { event_name?: unknown }).event_name : null
-    // An adopted cross-origin room may only END the session; its payload is never trusted.
-    if (e.origin !== location.origin) {
-      if (crossOriginAdopted && e.origin === iframeOrigin && name === "qiscus:session-closed") {
-        debug("room message (cross-origin)", name)
-        void ctl.sessionClosed()
-      }
-      return
-    }
+    if (e.origin !== location.origin) return
     debug("room message", name)
     if (name === "qiscus:session-ready") {
       resumeHandlers?.onReady()
@@ -712,26 +585,7 @@ export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPus
   return {
     beginInvite: () => ctl.beginInvite(),
     inviteFailed: () => void ctl.inviteFailed(),
-    handoffReady: () => {
-      if (iframeOrigin === location.origin) return void debug("handoff ready (same-origin room)")
-      // QismoFull announces handoff-ready from its own XHR onload, which runs
-      // BEFORE our load listener on that same request: wait one task so the
-      // exchange response has been read.
-      setTimeout(async () => {
-        if (roomSwap && (await roomSwap)) {
-          // Our own room now: it hands over the session itself (session-ready).
-          exchange = null
-          return void debug("handoff ready (room moved to this origin)")
-        }
-        debug("handoff ready (cross-origin room)", { exchangeSeen: !!exchange })
-        // A room on another origin cannot hand its SDK login to this page; the
-        // exchange the page saw can, when that origin is allowed (TEMPORARY).
-        const seen = exchange
-        exchange = null
-        crossOriginAdopted = !!seen
-        void ctl.crossOriginRoom({ origin: iframeOrigin, exchange: seen })
-      }, 0)
-    },
+    handoffReady: () => void debug("handoff ready"),
     resume: async () => {
       const s = await ctl.resume()
       debug("resume", s ? { appId: s.appId, roomId: s.roomId } : "nothing to resume")
@@ -753,11 +607,10 @@ export function start(opts: { iframeUrl: string; baseUrl?: string }): HandoffPus
     offerPasteLink() {
       if (!isStandalone() || loadSession(window.localStorage, Date.now()).state === "valid") return false
       ui.showPasteForm((token, env) => {
-        // The Home Screen app starts without baseUrl/iframeUrl; carry the ones
-        // from the pasted link so the token is exchanged on its own environment.
+        // The Home Screen app starts without baseUrl; carry the one from the
+        // pasted link so the token is exchanged on its own environment.
         const query = new URLSearchParams(location.search)
         if (env.baseUrl) query.set("baseUrl", env.baseUrl)
-        if (env.iframeUrl) query.set("iframeUrl", env.iframeUrl)
         const search = query.toString() ? `?${query.toString()}` : ""
         // Same transport as the normal invite: the fragment, which QismoFull
         // strips before the exchange and which never reaches a server.

@@ -264,7 +264,7 @@ async function onHttpsHost(opts: Parameters<typeof newContext>[0] = {}): Promise
   })
   return ctx
 }
-const hostInvite = (token: string) => `${HOST}/widget.html?iframeUrl=${encodeURIComponent(HOST)}#t=${token}`
+const hostInvite = (token: string) => `${HOST}/widget.html#t=${token}`
 
 const pushState = (page: Page) => page.evaluate(() => document.documentElement.dataset.handoffPush || null)
 async function waitPushState(page: Page, kind: string) {
@@ -319,8 +319,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     server?.stop(true)
   })
 
-  const invite = (t: string, selfRoom = true) =>
-    `${ORIGIN}/widget.html${selfRoom ? `?iframeUrl=${encodeURIComponent(ORIGIN)}` : ""}#t=${t}`
+  const invite = (t: string) => `${ORIGIN}/widget.html#t=${t}`
 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
@@ -669,19 +668,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "default cross-origin room: reported, nothing stored, no offer",
-    async () => {
-      const ctx = await newContext({ grant: true })
-      const page = await ctx.newPage()
-      await page.goto(invite("synthetic-invite-A", false))
-      await waitPushState(page, "cross-origin-room")
-      expect(await stored(page, SESSION_KEY)).toBeNull()
-      await ctx.close()
-    },
-    60_000,
-  )
-
-  test(
     "first invite, default (remote) room, app in PUSH_APP_CODES: room moves to this origin and guidance is a bubble",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "synthapp" })
@@ -694,7 +680,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
           return r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM })
         })
         const page = await ctx.newPage()
-        await page.goto(invite("synthetic-invite-A", false))
+        await page.goto(invite("synthetic-invite-A"))
         await waitPushState(page, "offer")
         const src = await page.locator("#qcw-iframe").getAttribute("src")
         expect(new URL(src!).origin).toBe(ORIGIN)
@@ -744,24 +730,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "first invite, default room, app NOT in PUSH_APP_CODES: room stays remote",
-    async () => {
-      await configurePush(true, { PUSH_APP_CODES: "otherapp" })
-      try {
-        const ctx = await newContext({ grant: true })
-        const page = await ctx.newPage()
-        await page.goto(invite("synthetic-invite-A", false))
-        await page.waitForFunction(() => /omnichannel\.qiscus\.com/.test(document.getElementById("qcw-iframe")?.getAttribute("src") || ""), null, { timeout: 15_000 })
-        await waitPushState(page, "cross-origin-room")
-        await ctx.close()
-      } finally {
-        await configurePush(true)
-      }
-    },
-    60_000,
-  )
-
-  test(
     "WhatsApp in-app browser, first invite with the default room (Weaper-style app in PUSH_APP_CODES): Safari steps as a bubble",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "synthapp" })
@@ -777,40 +745,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         await bubble.waitFor()
         expect(await bubble.innerText()).toContain("Safari")
         expect(await page.locator("#handoff-push").isHidden()).toBe(true)
-        await ctx.close()
-      } finally {
-        await configurePush(true)
-      }
-    },
-    60_000,
-  )
-
-  test(
-    "cross-origin room in PUSH_ROOM_ORIGINS: the page verifies the exchange itself, offers, registers",
-    async () => {
-      await configurePush(true, { PUSH_ROOM_ORIGINS: "https://omnichannel.qiscus.com" })
-      try {
-        upstream.reset()
-        const ctx = await newContext({ grant: true })
-        const page = await ctx.newPage()
-        const logs: string[] = []
-        page.on("console", (m) => logs.push(m.text()))
-        await page.goto(invite("synthetic-invite-A", false))
-        await waitPushState(page, "offer")
-        expect(upstream.verifyCalls).toBe(1)
-        const session = JSON.parse((await stored(page, SESSION_KEY))!)
-        expect(session).toMatchObject({ appId: "synthapp", roomId: "500", user: { email: "customer-a@example.invalid" } })
-        const storageDump = await page.evaluate(() => JSON.stringify({ ...localStorage }))
-        expect(storageDump).not.toContain("synthetic-idt-")
-        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
-        await waitPushState(page, "enabled")
-        expect(upstream.deviceCalls).toHaveLength(1)
-        expect(upstream.deviceCalls[0]).toMatchObject({ path: "set_user_device_token", user: "customer-a@example.invalid", body: { device_platform: "web" } })
-        const trail = logs.join("\n")
-        expect(trail).toContain("[handoff-push] exchange seen")
-        expect(trail).not.toContain("synthetic-idt-")
-        expect(trail).not.toContain("synthetic-sdk-A")
-        expect(trail).not.toContain("customer-a@example.invalid")
         await ctx.close()
       } finally {
         await configurePush(true)
@@ -892,7 +826,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   // ------------------------------------------------ per-app push config (qismo-api)
 
   const STAG = "https://qismo-stag2.qiscus.io"
-  const stagInvite = (t: string) => `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(STAG)}&iframeUrl=${encodeURIComponent(STAG)}#t=${t}`
+  const stagInvite = (t: string) => `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(STAG)}#t=${t}`
   const fcmCfgs = (page: Page) => page.evaluate(() => (window as unknown as { __fcmCfgs?: unknown[] }).__fcmCfgs || [])
   const swScopes = (page: Page) =>
     page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).map((r) => new URL(r.scope).pathname).sort())
@@ -925,7 +859,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         const page = await ctx.newPage()
 
         // app 1 (prod host, default remote room): config comes from the backend, the room moves to this origin
-        await page.goto(invite("synthetic-invite-A", false))
+        await page.goto(invite("synthetic-invite-A"))
         await waitPushState(page, "offer")
         expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
         await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
@@ -971,7 +905,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         await viewer.waitForTimeout(800)
         const shown = await shownIn("/a/stagapp/")
         expect(shown.map((n) => n.tag)).toEqual(["handoff-800-1"])
-        expect(shown[0]!.data.resume).toBe(`/widget.html?source=notification&baseUrl=${encodeURIComponent(STAG)}&iframeUrl=${encodeURIComponent(STAG)}`)
+        expect(shown[0]!.data.resume).toBe(`/widget.html?source=notification&baseUrl=${encodeURIComponent(STAG)}`)
         expect(await shownIn("/a/synthapp/")).toEqual([])
         await ctx.close()
       } finally {
@@ -992,7 +926,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         upstream.reset()
         const ctx = await newContext({ grant: true })
         const page = await ctx.newPage()
-        await page.goto(invite("synthetic-invite-A", false))
+        await page.goto(invite("synthetic-invite-A"))
         await waitPushState(page, "offer")
         expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
         await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
@@ -1018,7 +952,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
           upstream.reset()
           const ctx = await newContext({ grant: true })
           const page = await ctx.newPage()
-          await page.goto(invite("synthetic-invite-A", false))
+          await page.goto(invite("synthetic-invite-A"))
           await waitPushState(page, "offer")
           // env enabled the app: the default remote room still moved to this origin
           expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
@@ -1050,7 +984,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
           upstream.reset()
           const ctx = await newContext({ grant: true })
           const page = await ctx.newPage()
-          const hostile = `&apiKey=${"AIza" + "X".repeat(35)}&projectId=evil-project&vapidKey=evil&firebase=%7B%7D`
+          const hostile = `?apiKey=${"AIza" + "X".repeat(35)}&projectId=evil-project&vapidKey=evil&firebase=%7B%7D`
           await page.goto(invite("synthetic-invite-A").replace("#t=", `${hostile}#t=`))
           await waitPushState(page, "unconfigured")
           await page.evaluate(() =>
@@ -1083,9 +1017,9 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         const ctx = await newContext({ grant: true })
         const page = await ctx.newPage()
         await page.goto(stagInvite("synthetic-invite-S"))
-        // not enabled for push -> the remote room is kept and push is off ("cross-origin-room")
-        await waitPushState(page, "cross-origin-room")
-        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(STAG)
+        // the backend has nothing for this app and the env has no config -> push stays off
+        await waitPushState(page, "unconfigured")
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
         expect(await fcmCfgs(page)).toEqual([])
         expect((await swScopes(page)).filter((s) => s.startsWith("/a/"))).toEqual([])
         expect(backend.hits.some((h) => h.includes("synthapp"))).toBe(false)

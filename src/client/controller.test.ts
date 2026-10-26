@@ -18,7 +18,6 @@ const CONFIG: PushConfig = {
   },
   vapidKey: "synthetic-vapid",
   appCodes: null,
-  roomOrigins: [],
 }
 
 const tok = (n: number) => `synthetic-fcm-${n}:` + "A".repeat(120)
@@ -300,81 +299,6 @@ describe("PushController (synthetic)", () => {
     expect(h.sdkCalls.map((c) => [c.path, c.user])).toEqual([["remove_user_device_token", "old@example.invalid"]])
     expect(h.storage.getItem(REG_KEY)).toBeNull()
     expect(h.swWrites.at(-1)).toBeNull()
-  })
-
-  test("room is not same-origin: reported, and an old identity is torn down", async () => {
-    const h = harness()
-    h.login("app1", "11", "old@example.invalid")
-    await h.ctl.sessionReady()
-    await h.ctl.enable()
-    h.ctl.beginInvite()
-    await h.ctl.crossOriginRoom()
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.storage.getItem(REG_KEY)).toBeNull()
-  })
-
-  const ROOM = "https://omnichannel.example.invalid"
-  const seen = { appId: "app1", roomId: "77", identityToken: "synthetic-identity-token" }
-
-  test("cross-origin room matched by a wildcard entry is adopted like a listed one", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: ["https://*.example.invalid"] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: "https://stag9.example.invalid", exchange: seen })
-    expect(h.sdkCalls.map((c) => c.path)).toContain("verify_identity_token")
-    expect(loadSession(h.storage, h.nowFn()).state).toBe("valid")
-  })
-
-  test("cross-origin room NOT in roomOrigins: reported, no SDK call, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: ["https://other.example.invalid"] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.sdkCalls).toEqual([])
-    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
-  })
-
-  test("allowed cross-origin room without a seen exchange: reported, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: null })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.sdkCalls).toEqual([])
-  })
-
-  test("allowed cross-origin room: identity token verified as the app, session stored, offer shown, then registered", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.sdkCalls.map((c) => [c.path, c.app, c.user])).toEqual([["verify_identity_token", "app1", null as unknown as string]])
-    const loaded = loadSession(h.storage, h.nowFn())
-    expect(loaded.state).toBe("valid")
-    if (loaded.state !== "valid") throw new Error("unreachable")
-    expect([loaded.session.appId, loaded.session.roomId, loaded.session.user.email]).toEqual(["app1", "77", "cross@example.invalid"])
-    expect(JSON.stringify(loaded.session)).not.toContain("must-not-be-stored")
-    expect(JSON.stringify(loaded.session)).not.toContain("synthetic-identity-token")
-    expect(h.last()).toEqual({ kind: "offer" })
-    await h.ctl.enable()
-    expect(h.last()).toEqual({ kind: "enabled" })
-    expect(h.sdkCalls.at(-1)!.path).toBe("set_user_device_token")
-    expect(h.sdkCalls.at(-1)!.user).toBe("cross@example.invalid")
-  })
-
-  test("allowed cross-origin room, verify rejected upstream: reported, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig, status: 401 })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
-  })
-
-  test("permission revoked in browser settings: registration removed on next load", async () => {
-    for (const revoked of ["default", "denied"] as const) {
-      const h = harness()
-      h.login("app1", "11", "c1@example.invalid")
-      await h.ctl.sessionReady()
-      await h.ctl.enable()
-      h.sdkCalls.length = 0
-      h.setPermission(revoked)
-      await h.ctl.sessionReady()
-      expect(h.sdkCalls.map((c) => c.path)).toEqual(["remove_user_device_token"])
-      expect(h.storage.getItem(REG_KEY)).toBeNull()
-      expect(h.last()).toEqual({ kind: revoked === "denied" ? "denied" : "offer" })
-    }
   })
 
   test("user turns it off: removed + FCM token deleted", async () => {

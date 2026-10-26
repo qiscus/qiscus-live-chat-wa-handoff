@@ -104,8 +104,6 @@ export function resolveAppConfig(env: PushConfig, backend: AppPushConfig | null,
     firebase: backend.firebase,
     vapidKey: backend.vapidKey,
     appCodes: [appCode],
-    // Only the Worker env knows PUSH_ROOM_ORIGINS; the backend does not provide it.
-    roomOrigins: env.status === "configured" ? env.roomOrigins : [],
     source: "backend",
     swScope: appScope(appCode),
   }

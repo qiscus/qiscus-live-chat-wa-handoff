@@ -20,7 +20,6 @@ export const PUSH_ENV_KEYS = [
   "FIREBASE_APP_ID",
   "FIREBASE_VAPID_KEY",
   "PUSH_APP_CODES",
-  "PUSH_ROOM_ORIGINS",
 ] as const
 
 export type PushEnvKey = (typeof PUSH_ENV_KEYS)[number]
@@ -41,15 +40,6 @@ export type PushConfig =
       vapidKey: string
       /** null = every app may enable push. */
       appCodes: string[] | null
-      /**
-       * TEMPORARY: origins of a CROSS-origin room iframe (e.g. the default
-       * https://omnichannel.qiscus.com) for which the page may still enable
-       * push, by verifying the exchange's identity token itself. Empty = only
-       * the same-origin room. Meant to come from the WA handoff "Allowed
-       * domains" setting once qismo-api exposes it publicly; until then the
-       * Worker's PUSH_ROOM_ORIGINS.
-       */
-      roomOrigins: string[]
       /**
        * Set by the PAGE only (never emitted by the Worker's /push/config):
        * this config came from qismo-api for one app, and that app's push
@@ -101,47 +91,6 @@ export function isVapidPublicKey(value: string): boolean {
 }
 
 /**
- * A bare https origin (http only for localhost), or a wildcard such as
- * `https://*.qiscus.io` (https only), or null. A wildcard matches any subdomain
- * of the given host, never the host itself, so `https://*.qiscus.io` covers
- * qismo-stag2.qiscus.io, qismo-stag3.qiscus.io, ... without a deploy per host.
- * Paths, queries, credentials and ports on wildcards are refused.
- */
-function asRoomOrigin(value: string): string | null {
-  const wild = /^https:\/\/\*\.([^/?#:@*]+)$/.exec(value)
-  if (wild) return HOSTNAME.test(wild[1]) && wild[1].includes(".") ? `https://*.${wild[1].toLowerCase()}` : null
-  if (value.includes("*")) return null // a wildcard is only valid as the whole leftmost label
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
-  }
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1"
-  if (!(url.protocol === "https:" || (local && url.protocol === "http:"))) return null
-  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null
-  if (value.replace(/\/$/, "") !== url.origin) return null
-  return url.origin
-}
-
-/** True when `origin` equals an allowed entry or is a subdomain matched by a `https://*.host` entry. */
-export function roomOriginAllowed(origin: string | null | undefined, allowed: readonly string[]): boolean {
-  if (!origin) return false
-  let url: URL
-  try {
-    url = new URL(origin)
-  } catch {
-    return false
-  }
-  if (url.origin !== origin) return false
-  return allowed.some((entry) => {
-    if (entry === origin) return true
-    const wild = /^https:\/\/\*\.(.+)$/.exec(entry)
-    return !!wild && url.protocol === "https:" && url.port === "" && url.hostname.endsWith(`.${wild[1]}`) && HOSTNAME.test(url.hostname)
-  })
-}
-
-/**
  * The one place the Firebase web-config rules live. Used for the Worker env
  * (readPushConfig) and for per-app config fetched from qismo-api in the page
  * (src/client/appConfig.ts). Empty values are skipped (reported as missing by
@@ -184,7 +133,6 @@ export function readPushConfig(env: PushEnv): PushConfig {
   const vapidKey = get("FIREBASE_VAPID_KEY")
   const authDomain = get("FIREBASE_AUTH_DOMAIN")
   const appCodesRaw = get("PUSH_APP_CODES")
-  const roomOriginsRaw = get("PUSH_ROOM_ORIGINS")
 
   const invalid = invalidFirebaseFields({ apiKey, projectId, senderId, appId, vapidKey, authDomain })
 
@@ -198,20 +146,9 @@ export function readPushConfig(env: PushEnv): PushConfig {
     else appCodes = list
   }
 
-  let roomOrigins: string[] = []
-  if (roomOriginsRaw) {
-    const list = roomOriginsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map(asRoomOrigin)
-    if (list.length === 0 || list.some((o) => o === null)) invalid.push("PUSH_ROOM_ORIGINS")
-    else roomOrigins = [...new Set(list as string[])]
-  }
-
   if (missing.length || invalid.length) return { status: "unconfigured", missing, invalid }
 
   const firebase: FirebaseWebConfig = { apiKey, projectId, messagingSenderId: senderId, appId }
   if (authDomain) firebase.authDomain = authDomain
-  return { status: "configured", firebase, vapidKey, appCodes, roomOrigins }
+  return { status: "configured", firebase, vapidKey, appCodes }
 }

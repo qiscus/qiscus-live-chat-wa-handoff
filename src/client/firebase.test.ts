@@ -12,7 +12,7 @@ describe("PushStageError", () => {
 
 // SYNTHETIC Firebase web configs (no network: initializeApp only stores options).
 const fb = (n: string, sender: string) =>
-  ({ status: "configured", vapidKey: "v", appCodes: null, roomOrigins: [], firebase: { apiKey: "AIza" + n.repeat(35), projectId: `proj-${n}-synth`, messagingSenderId: sender, appId: `1:${sender}:web:abcdef012345` } }) as never
+  ({ status: "configured", vapidKey: "v", appCodes: null, firebase: { apiKey: "AIza" + n.repeat(35), projectId: `proj-${n}-synth`, messagingSenderId: sender, appId: `1:${sender}:web:abcdef012345` } }) as never
 
 describe("firebaseApp: one Firebase app per project, reused", () => {
   afterEach(async () => {

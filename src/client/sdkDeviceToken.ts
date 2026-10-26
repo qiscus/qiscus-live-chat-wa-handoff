@@ -74,31 +74,3 @@ export interface VerifyResult {
   user?: SdkUser
   error?: string
 }
-
-/**
- * Cross-origin room only: turn the exchange's identity token into the
- * customer's SDK login, the same call the room iframe makes
- * (`QiscusSDK.core.verifyIdentityToken`). The nonce inside the token is not
- * consumed and an existing user's SDK token is not rotated, so the room's own
- * login is unaffected. The identity token lives ~120 s and is never stored.
- */
-export async function verifyIdentityToken(fetchFn: typeof fetch, appId: string, identityToken: string): Promise<VerifyResult> {
-  if (!identityToken || identityToken.length > 8192) return { ok: false, status: 0, error: "invalid-identity-token" }
-  try {
-    const res = await fetchFn(`${SDK_BASE_URL}/api/v2/sdk/auth/verify_identity_token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "QISCUS-SDK-APP-ID": appId },
-      body: JSON.stringify({ identity_token: identityToken }),
-      credentials: "omit",
-      referrerPolicy: "no-referrer",
-      cache: "no-store",
-    })
-    if (!res.ok) return { ok: false, status: res.status, error: `http-${res.status}` }
-    const body = (await res.json().catch(() => null)) as { results?: { user?: unknown } } | null
-    const user = body?.results?.user as SdkUser | undefined
-    if (!user || typeof user.email !== "string" || typeof user.token !== "string") return { ok: false, status: res.status, error: "bad-response" }
-    return { ok: true, status: res.status, user }
-  } catch {
-    return { ok: false, status: 0, error: "network" }
-  }
-}

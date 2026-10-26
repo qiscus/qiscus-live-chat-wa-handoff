@@ -87,9 +87,9 @@ describe("parseInviteLink (synthetic tokens)", () => {
 
 describe("parseInviteEnv (environment carried by a pasted widget link)", () => {
   const T = "eyJhbG...-abc"
-  test("keeps baseUrl and iframeUrl from this page's link as origins", () => {
+  test("keeps baseUrl from this page's link as an origin and ignores iframeUrl", () => {
     const link = `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://qismo-stag2.qiscus.io/x")}&iframeUrl=${encodeURIComponent(ORIGIN)}#t=${T}`
-    expect(parseInviteEnv(link, ORIGIN)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io", iframeUrl: ORIGIN })
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io" })
   })
   test("drops hosts that fromQuery would refuse", () => {
     const link = `${ORIGIN}/widget.html?baseUrl=https%3A%2F%2Fevil.example&iframeUrl=https%3A%2F%2Fevil.example#t=${T}`
