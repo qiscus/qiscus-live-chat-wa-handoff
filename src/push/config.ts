@@ -20,7 +20,6 @@ export const PUSH_ENV_KEYS = [
   "FIREBASE_APP_ID",
   "FIREBASE_VAPID_KEY",
   "PUSH_APP_CODES",
-  "PUSH_ROOM_ORIGINS",
 ] as const
 
 export type PushEnvKey = (typeof PUSH_ENV_KEYS)[number]
@@ -42,14 +41,13 @@ export type PushConfig =
       /** null = every app may enable push. */
       appCodes: string[] | null
       /**
-       * TEMPORARY: origins of a CROSS-origin room iframe (e.g. the default
-       * https://omnichannel.qiscus.com) for which the page may still enable
-       * push, by verifying the exchange's identity token itself. Empty = only
-       * the same-origin room. Meant to come from the WA handoff "Allowed
-       * domains" setting once qismo-api exposes it publicly; until then the
-       * Worker's PUSH_ROOM_ORIGINS.
+       * Set by the PAGE only (never emitted by the Worker's /push/config):
+       * this config came from qismo-api for one app, and that app's push
+       * subscription lives in its own service-worker scope. Absent = the
+       * Worker env config and the legacy root-scope registration.
        */
-      roomOrigins: string[]
+      source?: "backend"
+      swScope?: string
     }
   | {
       status: "unconfigured"
@@ -92,19 +90,33 @@ export function isVapidPublicKey(value: string): boolean {
   return !!bytes && bytes.length === 65 && bytes[0] === 0x04
 }
 
-/** A bare https origin (http only for localhost), or null. Paths, queries and credentials are refused. */
-function asRoomOrigin(value: string): string | null {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
+/**
+ * The one place the Firebase web-config rules live. Used for the Worker env
+ * (readPushConfig) and for per-app config fetched from qismo-api in the page
+ * (src/client/appConfig.ts). Empty values are skipped (reported as missing by
+ * the caller); returns the NAMES of values that are present but malformed.
+ */
+export function invalidFirebaseFields(v: {
+  apiKey: string
+  projectId: string
+  senderId: string
+  appId: string
+  vapidKey: string
+  authDomain: string
+}): PushEnvKey[] {
+  const invalid: PushEnvKey[] = []
+  if (v.apiKey && !API_KEY.test(v.apiKey)) invalid.push("FIREBASE_API_KEY")
+  if (v.projectId && !PROJECT_ID.test(v.projectId)) invalid.push("FIREBASE_PROJECT_ID")
+  if (v.senderId && !SENDER_ID.test(v.senderId)) invalid.push("FIREBASE_MESSAGING_SENDER_ID")
+  if (v.appId) {
+    const m = APP_ID.exec(v.appId)
+    // The app id embeds the project number; a mismatch means two projects
+    // were mixed up, and a token minted that way would never deliver.
+    if (!m || (v.senderId && m[1] !== v.senderId)) invalid.push("FIREBASE_APP_ID")
   }
-  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1"
-  if (!(url.protocol === "https:" || (local && url.protocol === "http:"))) return null
-  if (url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null
-  if (value.replace(/\/$/, "") !== url.origin) return null
-  return url.origin
+  if (v.vapidKey && !isVapidPublicKey(v.vapidKey)) invalid.push("FIREBASE_VAPID_KEY")
+  if (v.authDomain && !HOSTNAME.test(v.authDomain)) invalid.push("FIREBASE_AUTH_DOMAIN")
+  return invalid
 }
 
 export function readPushConfig(env: PushEnv): PushConfig {
@@ -114,8 +126,6 @@ export function readPushConfig(env: PushEnv): PushConfig {
   }
 
   const missing = REQUIRED.filter((k) => !get(k))
-  const invalid: PushEnvKey[] = []
-
   const apiKey = get("FIREBASE_API_KEY")
   const projectId = get("FIREBASE_PROJECT_ID")
   const senderId = get("FIREBASE_MESSAGING_SENDER_ID")
@@ -123,19 +133,8 @@ export function readPushConfig(env: PushEnv): PushConfig {
   const vapidKey = get("FIREBASE_VAPID_KEY")
   const authDomain = get("FIREBASE_AUTH_DOMAIN")
   const appCodesRaw = get("PUSH_APP_CODES")
-  const roomOriginsRaw = get("PUSH_ROOM_ORIGINS")
 
-  if (apiKey && !API_KEY.test(apiKey)) invalid.push("FIREBASE_API_KEY")
-  if (projectId && !PROJECT_ID.test(projectId)) invalid.push("FIREBASE_PROJECT_ID")
-  if (senderId && !SENDER_ID.test(senderId)) invalid.push("FIREBASE_MESSAGING_SENDER_ID")
-  if (appId) {
-    const m = APP_ID.exec(appId)
-    // The app id embeds the project number; a mismatch means two projects
-    // were mixed up, and a token minted that way would never deliver.
-    if (!m || (senderId && m[1] !== senderId)) invalid.push("FIREBASE_APP_ID")
-  }
-  if (vapidKey && !isVapidPublicKey(vapidKey)) invalid.push("FIREBASE_VAPID_KEY")
-  if (authDomain && !HOSTNAME.test(authDomain)) invalid.push("FIREBASE_AUTH_DOMAIN")
+  const invalid = invalidFirebaseFields({ apiKey, projectId, senderId, appId, vapidKey, authDomain })
 
   let appCodes: string[] | null = null
   if (appCodesRaw) {
@@ -147,20 +146,9 @@ export function readPushConfig(env: PushEnv): PushConfig {
     else appCodes = list
   }
 
-  let roomOrigins: string[] = []
-  if (roomOriginsRaw) {
-    const list = roomOriginsRaw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map(asRoomOrigin)
-    if (list.length === 0 || list.some((o) => o === null)) invalid.push("PUSH_ROOM_ORIGINS")
-    else roomOrigins = [...new Set(list as string[])]
-  }
-
   if (missing.length || invalid.length) return { status: "unconfigured", missing, invalid }
 
   const firebase: FirebaseWebConfig = { apiKey, projectId, messagingSenderId: senderId, appId }
   if (authDomain) firebase.authDomain = authDomain
-  return { status: "configured", firebase, vapidKey, appCodes, roomOrigins }
+  return { status: "configured", firebase, vapidKey, appCodes }
 }

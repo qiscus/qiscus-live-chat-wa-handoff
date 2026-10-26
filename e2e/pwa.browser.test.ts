@@ -12,7 +12,7 @@
  *   - qismo.qiscus.com exchange and api3.qiscus.com SDK REST: in-test fakes
  *     that enforce single-use identity tokens, SDK-token auth and room
  *     membership, and record device-token registrations;
- *   - /js/qiscus-sdk.3.2.6.js inside the room: a tiny stub exposing the same
+ *   - /js/qiscus-handoff.js inside the room: a tiny stub exposing the same
  *     calls the room page makes (the real SDK needs a live Qiscus app + MQTT);
  *   - FCM token minting: window.__HANDOFF_PUSH_TEST__ seam (localhost only),
  *     because headless Chrome cannot obtain a real FCM/push-service token;
@@ -66,9 +66,26 @@ let ORIGIN = ""
 
 // ------------------------------------------------------- synthetic upstream
 
-const USERS: Record<string, { email: string; token: string; room: string }> = {
+const USERS: Record<string, { email: string; token: string; room: string; app?: string }> = {
   "synthetic-invite-A": { email: "customer-a@example.invalid", token: "synthetic-sdk-A", room: "500" },
   "synthetic-invite-B": { email: "customer-b@example.invalid", token: "synthetic-sdk-B", room: "600" },
+  // a second app (served by the stag2 backend in the per-app tests)
+  "synthetic-invite-S": { email: "customer-s@example.invalid", token: "synthetic-sdk-S", room: "800", app: "stagapp" },
+}
+const appOf = (u: { app?: string }) => u.app ?? "synthapp"
+
+// Per-app push config as qismo-api would answer it (SYNTHETIC values; the
+// real endpoint is being built in qismo-api and is NOT exercised here).
+type BackendAnswer = "configured" | "unconfigured" | "http-404" | "garbage" | "bad-vapid" | "abort"
+const backend = {
+  answers: {} as Record<string, BackendAnswer>, // per app code; missing = http-404 (endpoint not deployed yet)
+  firebase: {} as Record<string, { apiKey: string; projectId: string; messagingSenderId: string; appId: string }>,
+  vapid: "",
+  hits: [] as string[],
+  reset() {
+    this.answers = {}
+    this.hits = []
+  },
 }
 const upstream = {
   usedIdentityTokens: new Set<string>(),
@@ -99,13 +116,27 @@ async function fakeQismo(route: Route) {
   const req = route.request()
   if (req.method() === "OPTIONS") return cors(route, 204, {})
   const url = new URL(req.url())
+  if (url.pathname === "/api/v2/live_handover/push_config") {
+    const code = url.searchParams.get("app_code") || ""
+    backend.hits.push(`${url.host} ${code} cookie=${req.headers()["cookie"] ? "yes" : "no"}`)
+    const answer = backend.answers[code] ?? "http-404"
+    if (answer === "abort") return route.abort()
+    if (answer === "http-404") return cors(route, 404, { error: "not found (synthetic)" })
+    if (answer === "garbage") return cors(route, 200, { hello: "world" })
+    if (answer === "unconfigured") return cors(route, 200, { status: "unconfigured" })
+    return cors(route, 200, {
+      status: "configured",
+      firebase: backend.firebase[code],
+      vapidKey: answer === "bad-vapid" ? "not-a-vapid-key" : backend.vapid,
+    })
+  }
   if (url.pathname === "/api/v2/live_handover/exchange") {
     const invite = String((req.postDataJSON() as { token?: string })?.token || "")
     const u = USERS[invite]
     if (!u) return cors(route, 401, { code: "invalid_token", error: "synthetic invalid" })
     return cors(route, 200, {
       data: {
-        app_code: "synthapp",
+        app_code: appOf(u),
         room_id: Number(u.room),
         identity_token: `synthetic-idt-${invite}-${Date.now()}`,
         name: "Synthetic Customer",
@@ -138,7 +169,7 @@ async function fakeSdkApi(route: Route) {
     return cors(route, 200, { results: { user: { email: u.email, token: u.token, refresh_token: "synthetic-refresh", username: "Synthetic" } } })
   }
   const caller = userBySdkToken(h["qiscus-sdk-token"])
-  if (!caller || h["qiscus-sdk-user-id"] !== caller.email || h["qiscus-sdk-app-id"] !== "synthapp") {
+  if (!caller || h["qiscus-sdk-user-id"] !== caller.email || h["qiscus-sdk-app-id"] !== appOf(caller)) {
     return cors(route, 401, { error: "unauthorized (synthetic)" })
   }
   if (url.pathname === "/api/v2/sdk/get_room_by_id") {
@@ -183,14 +214,19 @@ const REMOTE_ROOM = "<!doctype html><title>remote room (synthetic)</title><body>
 
 let browser: Browser
 
-const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async () => {
+// The page passes the registration it minted against: the root one for the
+// Worker-env path, /a/<app>/ for a per-app config. __fcmCfgs records which
+// Firebase project and scope each mint used.
+const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async (cfg, reg) => {
   window.__fcmMints = (window.__fcmMints || 0) + 1;
-  const reg = await navigator.serviceWorker.ready;
-  return 'synthetic-fcm-' + (reg.active ? 'sw' : 'nosw') + '-' + 'A'.repeat(120);
+  const r = reg || await navigator.serviceWorker.ready;
+  (window.__fcmCfgs = window.__fcmCfgs || []).push({ projectId: cfg.firebase.projectId, vapid: String(cfg.vapidKey).slice(0, 8), scope: new URL(r.scope).pathname, source: cfg.source || 'env' });
+  return 'synthetic-fcm-' + (r.active ? 'sw' : 'nosw') + '-' + 'A'.repeat(120);
 } } };`
 
 async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean; systemEvent?: boolean } = {}): Promise<BrowserContext> {
-  const ctx = await browser.newContext({ userAgent: opts.userAgent })
+  // Indonesian browser: the assertions below expect the Indonesian copy (English is the fallback).
+  const ctx = await browser.newContext({ userAgent: opts.userAgent, locale: "id-ID" })
   if (opts.grant) await ctx.grantPermissions(["notifications"], { origin: ORIGIN })
   await ctx.addInitScript(FCM_SEAM)
   // the SDK stub renders a message list like the real room (.qcw-comments .inner)
@@ -205,7 +241,13 @@ async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: bo
   await ctx.route("https://qismo.qiscus.com/**", fakeQismo)
   await ctx.route("https://api3.qiscus.com/**", fakeSdkApi)
   await ctx.route("https://omnichannel.qiscus.com/**", (r) => r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM }))
-  await ctx.route(`${ORIGIN}/js/qiscus-sdk.3.2.6.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
+  // stag2: API (exchange, push_config) and room host in one
+  await ctx.route("https://qismo-stag2.qiscus.io/**", (r) =>
+    new URL(r.request().url()).pathname.startsWith("/api/") || r.request().method() === "OPTIONS"
+      ? fakeQismo(r)
+      : r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM }),
+  )
+  await ctx.route(`${ORIGIN}/js/qiscus-handoff.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
   return ctx
 }
 
@@ -215,14 +257,14 @@ const HOST = "https://handoff.example"
 async function onHttpsHost(opts: Parameters<typeof newContext>[0] = {}): Promise<BrowserContext> {
   const ctx = await newContext(opts)
   await ctx.route(`${HOST}/**`, async (r) => {
-    if (new URL(r.request().url()).pathname === "/js/qiscus-sdk.3.2.6.js")
+    if (new URL(r.request().url()).pathname === "/js/qiscus-handoff.js")
       return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
     const res = await r.fetch({ url: r.request().url().replace(HOST, ORIGIN) })
     await r.fulfill({ response: res })
   })
   return ctx
 }
-const hostInvite = (token: string) => `${HOST}/widget.html?iframeUrl=${encodeURIComponent(HOST)}#t=${token}`
+const hostInvite = (token: string) => `${HOST}/widget.html#t=${token}`
 
 const pushState = (page: Page) => page.evaluate(() => document.documentElement.dataset.handoffPush || null)
 async function waitPushState(page: Page, kind: string) {
@@ -232,11 +274,11 @@ const stored = (page: Page, key: string) => page.evaluate((k) => localStorage.ge
 const SESSION_KEY = "qiscus-handoff:session:v1"
 const REG_KEY = "qiscus-handoff:push-registration:v1"
 
-async function swRegistrationId(cdp: CDPSession): Promise<string> {
+async function swRegistrationId(cdp: CDPSession, scopePath = "/"): Promise<string> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("no SW registration seen")), 10_000)
     cdp.on("ServiceWorker.workerRegistrationUpdated", (e: { registrations: { registrationId: string; scopeURL: string; isDeleted: boolean }[] }) => {
-      const r = e.registrations.find((x) => x.scopeURL === ORIGIN + "/" && !x.isDeleted)
+      const r = e.registrations.find((x) => x.scopeURL === ORIGIN + scopePath && !x.isDeleted)
       if (r) {
         clearTimeout(t)
         resolve(r.registrationId)
@@ -261,6 +303,11 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   beforeAll(async () => {
     env.ASSETS = assets
     await configurePush(true)
+    backend.vapid = await syntheticVapid()
+    backend.firebase = {
+      synthapp: { apiKey: "AIza" + "1".repeat(35), projectId: "proj-one-synth", messagingSenderId: "111111111111", appId: "1:111111111111:web:abc123def456" },
+      stagapp: { apiKey: "AIza" + "2".repeat(35), projectId: "proj-two-synth", messagingSenderId: "222222222222", appId: "1:222222222222:web:abc123def456" },
+    }
     server = Bun.serve({ port: 0, hostname: "localhost", fetch: (req) => assets.fetch(req).then((r) => (r.status === 404 ? app.fetch(req, env) : r)) })
     ORIGIN = `http://localhost:${server.port}`
     browser = await chromium.launch({ executablePath: CHROME, headless: true })
@@ -272,13 +319,12 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     server?.stop(true)
   })
 
-  const invite = (t: string, selfRoom = true) =>
-    `${ORIGIN}/widget.html${selfRoom ? `?iframeUrl=${encodeURIComponent(ORIGIN)}` : ""}#t=${t}`
+  const invite = (t: string) => `${ORIGIN}/widget.html#t=${t}`
 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { start_url: string }).start_url).toBe("/widget.html?source=pwa")
+    expect(((await res.json()) as { start_url: string }).start_url).toBe("widget.html?source=pwa")
     expect((await fetch(`${ORIGIN}/sw.js`)).status).toBe(200)
     const cfg = (await (await fetch(`${ORIGIN}/push/config`)).json()) as { status: string }
     expect(cfg.status).toBe("configured")
@@ -622,19 +668,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "default cross-origin room: reported, nothing stored, no offer",
-    async () => {
-      const ctx = await newContext({ grant: true })
-      const page = await ctx.newPage()
-      await page.goto(invite("synthetic-invite-A", false))
-      await waitPushState(page, "cross-origin-room")
-      expect(await stored(page, SESSION_KEY)).toBeNull()
-      await ctx.close()
-    },
-    60_000,
-  )
-
-  test(
     "first invite, default (remote) room, app in PUSH_APP_CODES: room moves to this origin and guidance is a bubble",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "synthapp" })
@@ -647,7 +680,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
           return r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM })
         })
         const page = await ctx.newPage()
-        await page.goto(invite("synthetic-invite-A", false))
+        await page.goto(invite("synthetic-invite-A"))
         await waitPushState(page, "offer")
         const src = await page.locator("#qcw-iframe").getAttribute("src")
         expect(new URL(src!).origin).toBe(ORIGIN)
@@ -697,24 +730,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "first invite, default room, app NOT in PUSH_APP_CODES: room stays remote",
-    async () => {
-      await configurePush(true, { PUSH_APP_CODES: "otherapp" })
-      try {
-        const ctx = await newContext({ grant: true })
-        const page = await ctx.newPage()
-        await page.goto(invite("synthetic-invite-A", false))
-        await page.waitForFunction(() => /omnichannel\.qiscus\.com/.test(document.getElementById("qcw-iframe")?.getAttribute("src") || ""), null, { timeout: 15_000 })
-        await waitPushState(page, "cross-origin-room")
-        await ctx.close()
-      } finally {
-        await configurePush(true)
-      }
-    },
-    60_000,
-  )
-
-  test(
     "WhatsApp in-app browser, first invite with the default room (Weaper-style app in PUSH_APP_CODES): Safari steps as a bubble",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "synthapp" })
@@ -730,40 +745,6 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         await bubble.waitFor()
         expect(await bubble.innerText()).toContain("Safari")
         expect(await page.locator("#handoff-push").isHidden()).toBe(true)
-        await ctx.close()
-      } finally {
-        await configurePush(true)
-      }
-    },
-    60_000,
-  )
-
-  test(
-    "cross-origin room in PUSH_ROOM_ORIGINS: the page verifies the exchange itself, offers, registers",
-    async () => {
-      await configurePush(true, { PUSH_ROOM_ORIGINS: "https://omnichannel.qiscus.com" })
-      try {
-        upstream.reset()
-        const ctx = await newContext({ grant: true })
-        const page = await ctx.newPage()
-        const logs: string[] = []
-        page.on("console", (m) => logs.push(m.text()))
-        await page.goto(invite("synthetic-invite-A", false))
-        await waitPushState(page, "offer")
-        expect(upstream.verifyCalls).toBe(1)
-        const session = JSON.parse((await stored(page, SESSION_KEY))!)
-        expect(session).toMatchObject({ appId: "synthapp", roomId: "500", user: { email: "customer-a@example.invalid" } })
-        const storageDump = await page.evaluate(() => JSON.stringify({ ...localStorage }))
-        expect(storageDump).not.toContain("synthetic-idt-")
-        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
-        await waitPushState(page, "enabled")
-        expect(upstream.deviceCalls).toHaveLength(1)
-        expect(upstream.deviceCalls[0]).toMatchObject({ path: "set_user_device_token", user: "customer-a@example.invalid", body: { device_platform: "web" } })
-        const trail = logs.join("\n")
-        expect(trail).toContain("[handoff-push] exchange seen")
-        expect(trail).not.toContain("synthetic-idt-")
-        expect(trail).not.toContain("synthetic-sdk-A")
-        expect(trail).not.toContain("customer-a@example.invalid")
         await ctx.close()
       } finally {
         await configurePush(true)
@@ -836,6 +817,280 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
         expect(logs.join("\n")).toContain("FIREBASE_VAPID_KEY")
         await ctx.close()
       } finally {
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  // ------------------------------------------------ per-app push config (qismo-api)
+
+  const STAG = "https://qismo-stag2.qiscus.io"
+  const stagInvite = (t: string) => `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(STAG)}#t=${t}`
+  const fcmCfgs = (page: Page) => page.evaluate(() => (window as unknown as { __fcmCfgs?: unknown[] }).__fcmCfgs || [])
+  const swScopes = (page: Page) =>
+    page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).map((r) => new URL(r.scope).pathname).sort())
+  const ctxKeys = (page: Page) =>
+    page.evaluate(
+      () =>
+        new Promise<string[]>((resolve) => {
+          const open = indexedDB.open("qiscus-handoff-push", 1)
+          open.onsuccess = () => {
+            const db = open.result
+            const q = db.transaction("ctx").objectStore("ctx").getAllKeys()
+            q.onsuccess = () => {
+              db.close()
+              resolve((q.result as string[]).sort())
+            }
+          }
+        }),
+    )
+  const perApp = (project: string, scope: string) => ({ projectId: project, vapid: backend.vapid.slice(0, 8), scope, source: "backend" })
+
+  test(
+    "two apps on one origin: each gets its own backend config, its own SW scope and its own context",
+    async () => {
+      await configurePush(false) // the Worker env has NO Firebase config: only qismo-api can enable push
+      backend.reset()
+      backend.answers = { synthapp: "configured", stagapp: "configured" }
+      try {
+        upstream.reset()
+        const ctx = await newContext({ grant: true })
+        const page = await ctx.newPage()
+
+        // app 1 (prod host, default remote room): config comes from the backend, the room moves to this origin
+        await page.goto(invite("synthetic-invite-A"))
+        await waitPushState(page, "offer")
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(await fcmCfgs(page)).toEqual([perApp("proj-one-synth", "/a/synthapp/")])
+        expect(await swScopes(page)).toContain("/a/synthapp/")
+        expect(await ctxKeys(page)).toEqual(["/a/synthapp/"])
+        expect(JSON.parse((await stored(page, REG_KEY))!).scope).toBe("/a/synthapp/")
+
+        // app 2 (stag2 backend) in the same browser: another Firebase project, another scope
+        await page.goto(stagInvite("synthetic-invite-S"))
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("qiscus-handoff:session:v1") || "{}").appId === "stagapp")
+        await waitPushState(page, "enabled")
+        expect(await fcmCfgs(page)).toEqual([perApp("proj-two-synth", "/a/stagapp/")])
+        expect(await swScopes(page)).toEqual(expect.arrayContaining(["/a/stagapp/", "/a/synthapp/"]))
+        // app 1's context was cleared, app 2's written; nothing is shared
+        expect(await ctxKeys(page)).toEqual(["/a/stagapp/"])
+        expect(upstream.deviceCalls.map((c) => [c.path, c.app])).toEqual([
+          ["set_user_device_token", "synthapp"],
+          ["remove_user_device_token", "synthapp"],
+          ["set_user_device_token", "stagapp"],
+        ])
+        // config was asked of each app's own backend host, for that app only, without cookies
+        expect(backend.hits).toContain("qismo.qiscus.com synthapp cookie=no")
+        expect(backend.hits).toContain("qismo-stag2.qiscus.io stagapp cookie=no")
+
+        // pushes: app 2's worker announces in app 2's room and reopens app 2's backend; app 1's worker is silent now
+        await page.close()
+        const viewer = await ctx.newPage()
+        await viewer.goto(`${ORIGIN}/offline.html`)
+        const deliver = async (scope: string, c: Record<string, unknown>) => {
+          const cdp = await ctx.newCDPSession(viewer)
+          const registrationId = await swRegistrationId(cdp, scope)
+          await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId, data: sdkPush(c) })
+        }
+        const shownIn = (scope: string) =>
+          viewer.evaluate(async (sc) => {
+            const reg = await navigator.serviceWorker.getRegistration(location.origin + sc)
+            return (await reg!.getNotifications()).map((n) => ({ tag: n.tag, data: n.data }))
+          }, scope)
+        await deliver("/a/stagapp/", { id: 1, room_id: 800, type: "text", message: "stag reply", email: "agent@example.invalid" })
+        await deliver("/a/synthapp/", { id: 2, room_id: 500, type: "text", message: "old app reply", email: "agent@example.invalid" })
+        await viewer.waitForTimeout(800)
+        const shown = await shownIn("/a/stagapp/")
+        expect(shown.map((n) => n.tag)).toEqual(["handoff-800-1"])
+        expect(shown[0]!.data.resume).toBe(`/widget.html?source=notification&baseUrl=${encodeURIComponent(STAG)}`)
+        expect(await shownIn("/a/synthapp/")).toEqual([])
+        await ctx.close()
+      } finally {
+        backend.reset()
+        await configurePush(true)
+      }
+    },
+    120_000,
+  )
+
+  test(
+    "reverse-proxied under a sub-path (qismo-api style): page, room, service workers and push stay inside the prefix",
+    async () => {
+      const PREFIX = "/api/v2/live_handover/w"
+      // Stands in for qismo-api: <prefix>/<path> is forwarded to this app's <path>; anything else is not routed here.
+      const proxy = Bun.serve({
+        port: 0,
+        hostname: "localhost",
+        fetch: (req) => {
+          const u = new URL(req.url)
+          if (!u.pathname.startsWith(PREFIX + "/")) return new Response("not routed", { status: 404 })
+          return fetch(ORIGIN + u.pathname.slice(PREFIX.length) + u.search, { method: req.method, headers: req.headers })
+        },
+      })
+      const PROXY = `http://localhost:${proxy.port}`
+      backend.reset()
+      backend.answers = { synthapp: "configured" }
+      try {
+        upstream.reset()
+        const ctx = await newContext()
+        await ctx.grantPermissions(["notifications"], { origin: PROXY })
+        // the API on the proxy's own origin (what baseUrl points at), and the room SDK stub
+        await ctx.route(`${PROXY}/api/v2/live_handover/{exchange,push_config}*`, fakeQismo)
+        await ctx.route(`${PROXY}${PREFIX}/js/qiscus-handoff.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
+        const page = await ctx.newPage()
+        const outside: string[] = []
+        const failed: string[] = []
+        page.on("request", (r) => {
+          const u = new URL(r.url())
+          if (u.origin === PROXY && !u.pathname.startsWith(PREFIX + "/") && !u.pathname.startsWith("/api/v2/live_handover/")) outside.push(u.pathname)
+        })
+        page.on("response", (r) => {
+          if (new URL(r.url()).origin === PROXY && r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`)
+        })
+        // no ?baseUrl: under a prefix the API is the page's own origin
+        // no ?baseUrl: under a prefix the API is the page's own origin
+        await page.goto(`${PROXY}${PREFIX}/widget.html#t=synthetic-invite-A`)
+        await waitPushState(page, "offer")
+
+        // the room iframe, the manifest and every asset resolved under the prefix
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).pathname).toBe(`${PREFIX}/iframes/v5/synthapp/live-handover-room`)
+        expect(await page.locator('link[rel="manifest"]').evaluate((l) => new URL((l as HTMLLinkElement).href).pathname)).toBe(`${PREFIX}/manifest.webmanifest`)
+        const manifest = (await (await fetch(`${PROXY}${PREFIX}/manifest.webmanifest`)).json()) as { start_url: string; icons: { src: string }[] }
+        expect(new URL(manifest.start_url, `${PROXY}${PREFIX}/manifest.webmanifest`).pathname).toBe(`${PREFIX}/widget.html`)
+        expect(new URL(manifest.icons[0]!.src, `${PROXY}${PREFIX}/manifest.webmanifest`).pathname).toBe(`${PREFIX}/img/pwa/icon-192.png`)
+
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        // the per-app worker is registered under the prefix, not at the domain root
+        expect(await fcmCfgs(page)).toEqual([perApp("proj-one-synth", `${PREFIX}/a/synthapp/`)])
+        expect(await page.evaluate(() => navigator.serviceWorker.getRegistrations().then((rs) => rs.map((r) => new URL(r.scope).pathname).sort()))).toContain(`${PREFIX}/a/synthapp/`)
+        expect(upstream.deviceCalls.map((c) => c.path)).toEqual(["set_user_device_token"])
+
+        expect(outside).toEqual([])
+        expect(failed).toEqual([])
+        await ctx.close()
+      } finally {
+        backend.reset()
+        proxy.stop(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "backend config wins over the Worker env, even for an app the env's PUSH_APP_CODES does not list",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "otherapp" })
+      backend.reset()
+      backend.answers = { synthapp: "configured" }
+      try {
+        upstream.reset()
+        const ctx = await newContext({ grant: true })
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A"))
+        await waitPushState(page, "offer")
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(await fcmCfgs(page)).toEqual([perApp("proj-one-synth", "/a/synthapp/")]) // not env's "synthetic-project"
+        await ctx.close()
+      } finally {
+        backend.reset()
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "backend unconfigured / 404 (endpoint not deployed) / unreachable / invalid: exactly the Worker-env behaviour, root scope (Weaper unchanged)",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "synthapp" })
+      try {
+        for (const answer of ["unconfigured", "http-404", "abort", "garbage", "bad-vapid"] as const) {
+          backend.reset()
+          backend.answers = { synthapp: answer }
+          upstream.reset()
+          const ctx = await newContext({ grant: true })
+          const page = await ctx.newPage()
+          await page.goto(invite("synthetic-invite-A"))
+          await waitPushState(page, "offer")
+          // env enabled the app: the default remote room still moved to this origin
+          expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
+          await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+          await waitPushState(page, "enabled")
+          expect(await fcmCfgs(page), answer).toEqual([{ projectId: "synthetic-project", vapid: expect.any(String), scope: "/", source: "env" }])
+          expect(await swScopes(page), answer).toEqual(["/"])
+          expect(await ctxKeys(page), answer).toEqual(["current"])
+          expect(JSON.parse((await stored(page, REG_KEY))!), answer).not.toHaveProperty("scope")
+          expect(upstream.deviceCalls).toHaveLength(1)
+          await ctx.close()
+        }
+      } finally {
+        backend.reset()
+        await configurePush(true)
+      }
+    },
+    120_000,
+  )
+
+  test(
+    "no env Firebase config and the backend has nothing usable for the app: push stays off; config can never come from the URL or postMessage",
+    async () => {
+      await configurePush(false)
+      try {
+        for (const answer of ["garbage", "bad-vapid", "unconfigured", "http-404"] as const) {
+          backend.reset()
+          backend.answers = { synthapp: answer }
+          upstream.reset()
+          const ctx = await newContext({ grant: true })
+          const page = await ctx.newPage()
+          const hostile = `?apiKey=${"AIza" + "X".repeat(35)}&projectId=evil-project&vapidKey=evil&firebase=%7B%7D`
+          await page.goto(invite("synthetic-invite-A").replace("#t=", `${hostile}#t=`))
+          await waitPushState(page, "unconfigured")
+          await page.evaluate(() =>
+            window.postMessage({ event_name: "qiscus:push-config", firebase: { projectId: "evil-project" }, vapidKey: "evil" }, "*"),
+          )
+          await page.waitForTimeout(300)
+          expect(await pushState(page), answer).toBe("unconfigured")
+          expect(await page.locator("#handoff-push").isHidden()).toBe(true)
+          expect(await fcmCfgs(page)).toEqual([])
+          expect((await swScopes(page)).filter((s) => s.startsWith("/a/"))).toEqual([])
+          expect(upstream.deviceCalls).toEqual([])
+          await ctx.close()
+        }
+      } finally {
+        backend.reset()
+        await configurePush(true)
+      }
+    },
+    120_000,
+  )
+
+  test(
+    "one app configured on the backend does not enable another app: its config is only ever used for its own app code",
+    async () => {
+      await configurePush(false)
+      backend.reset()
+      backend.answers = { synthapp: "configured", stagapp: "unconfigured" }
+      try {
+        upstream.reset()
+        const ctx = await newContext({ grant: true })
+        const page = await ctx.newPage()
+        await page.goto(stagInvite("synthetic-invite-S"))
+        // the backend has nothing for this app and the env has no config -> push stays off
+        await waitPushState(page, "unconfigured")
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
+        expect(await fcmCfgs(page)).toEqual([])
+        expect((await swScopes(page)).filter((s) => s.startsWith("/a/"))).toEqual([])
+        expect(backend.hits.some((h) => h.includes("synthapp"))).toBe(false)
+        expect(backend.hits).toContain("qismo-stag2.qiscus.io stagapp cookie=no")
+        await ctx.close()
+      } finally {
+        backend.reset()
         await configurePush(true)
       }
     },

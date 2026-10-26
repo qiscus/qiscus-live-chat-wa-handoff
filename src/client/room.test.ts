@@ -1,6 +1,6 @@
 // SYNTHETIC: fake windows/storage; invented app codes, users and invite tokens.
 import { describe, expect, test } from "bun:test"
-import { parseInviteLink } from "./inviteLink"
+import { parseInviteEnv, parseInviteLink } from "./inviteLink"
 import { persistLogin, resumeSession, trustedParent } from "./room"
 import { SESSION_KEY } from "./session"
 import { MemoryStorage } from "./testing"
@@ -82,5 +82,36 @@ describe("parseInviteLink (synthetic tokens)", () => {
     ]) {
       expect(parseInviteLink(bad, ORIGIN)).toBeNull()
     }
+  })
+})
+
+describe("invite links under a path prefix (synthetic)", () => {
+  const TOKEN = "synthetic-invite-token-0123456789" // the parser requires 16+ chars
+  const PREFIX_PATH = "/api/v2/live_handover/w/widget.html"
+  test("this page's own link at the prefix is read, the root path is not", () => {
+    expect(parseInviteLink(`${ORIGIN}${PREFIX_PATH}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toBe(TOKEN)
+    expect(parseInviteLink(`${ORIGIN}/widget.html#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toBeNull()
+  })
+  test("baseUrl is carried from the prefixed link only", () => {
+    const q = "?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io"
+    expect(parseInviteEnv(`${ORIGIN}${PREFIX_PATH}${q}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io" })
+    expect(parseInviteEnv(`${ORIGIN}/widget.html${q}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toEqual({})
+  })
+})
+
+describe("parseInviteEnv (environment carried by a pasted widget link)", () => {
+  const T = "eyJhbG...-abc"
+  test("keeps baseUrl from this page's link as an origin and ignores iframeUrl", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://qismo-stag2.qiscus.io/x")}&iframeUrl=${encodeURIComponent(ORIGIN)}#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io" })
+  })
+  test("drops hosts that fromQuery would refuse", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=https%3A%2F%2Fevil.example&iframeUrl=https%3A%2F%2Fevil.example#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({})
+    expect(parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(ORIGIN)}#t=${T}`, ORIGIN)).toEqual({})
+  })
+  test("redirector links and junk carry nothing", () => {
+    expect(parseInviteEnv(`https://qismo.qiscus.com/c/${T}`, ORIGIN)).toEqual({})
+    expect(parseInviteEnv("not a url", ORIGIN)).toEqual({})
   })
 })

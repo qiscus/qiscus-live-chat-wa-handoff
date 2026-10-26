@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <title>Sample App</title>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", function() {
+        var s, t;
+        s = document.createElement("script");
+        s.type = "text/javascript";
+        s.src = "http://localhost:8000/js/qismo-v3.js";
+        s.async = true;
+        s.onload = function() {
+          initiateQismo();
+        };
+        t = document.getElementsByTagName("script")[0];
+        t.parentNode.insertBefore(s, t);
+      });
+
+      function generateRandomID() {
+        var randomID = "";
+        var possible =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for (var i = 0; i < 5; i++)
+          randomID += possible.charAt(
+            Math.floor(Math.random() * possible.length)
+          );
+        return randomID;
+      }
+
+      function initiateQismo() {
+        if (!localStorage.getItem("qismo-data")) {
+          localStorage.setItem(
+            "qismo-data",
+            JSON.stringify({
+              display_name: generateRandomID(),
+              unique_id: generateRandomID()
+            })
+          );
+        }
+        window.QiscusWidget = new Qismo("gie-hulbwgwlulhjbbhz8", {
+		  verbose: true,
+          options: {
+			  qismoIframeUrl: 'http://localhost:8000',
+		  },
+          onLoginSuccess() {
+            QiscusWidget.widget.toggleWidget();
+          },
+          onHeaderClicked() {
+            // QiscusWidget.widget.toggleWidget();
+		  },
+		  onRoomChanged(data) {
+			  if(data.comments.length < 1)
+				QiscusWidget.sendMessage({
+					event_name: 'send-message',
+					text: 'Halo',
+				})
+		  },
+        });
+      }
+    </script>
+    <link
+      href="https://fonts.googleapis.com/css?family=Libre+Baskerville|Open+Sans&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *:before,
+      *:after {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        padding: 0 50px;
+        background-image: linear-gradient(to top, #30cfd0 0%, #330867 100%);
+        font-family: "Open Sans", sans-serif;
+        color: #fff;
+      }
+      .qcw-window-toggle-btn {
+        display: none !important;
+      }
+      h2 {
+        font-family: "Libre Baskerville", serif;
+        line-height: 1.5em;
+      }
+      .welcome-message {
+        max-width: 350px;
+      }
+      .welcome-message h2 {
+        margin: 20px 0 15px 0;
+      }
+      iframe#qcw-iframe {
+        right: 50% !important;
+        transform: translateX(200px) !important;
+      }
+      .qcw-trigger-btn {
+        display: none !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="welcome-message">
+      <img src="//multichannel.qiscus.com/img/logo.svg" alt="Qiscus Logo" />
+      <h2>Ingin tau gimana Qiscus bisa membantu kamu?</h2>
+      <p>Yuk cek sama-sama disini.</p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>qiscus-sdk-vue</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script
+      src="https://code.jquery.com/jquery-3.1.1.slim.min.js"
+      integrity="sha256-/SIrNqv8h6QGKDuNoLGA4iret+kyesCkHGzVUUV0shc="
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/emojione/2.2.7/lib/js/emojione.min.js"></script>
+    <style>
+      *,
+      *:before,
+      *:after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        padding: 0;
+        margin: 0;
+      }
+      body {
+        background: url("./static/bg.png") center 105px no-repeat,
+          linear-gradient(
+            140.45deg,
+            #9873ba 28.28%,
+            rgba(0, 158, 244, 0.8) 109.19%
+          );
+      }
+      .patient-card {
+        min-width: 250px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        text-align: center;
+        background: #fff;
+        box-shadow: 0 2px 17px rgba(0, 0, 0, 0.32);
+      }
+      .patient-card strong {
+        display: block;
+        padding: 10px;
+        border-bottom: 1px solid #ddd;
+      }
+      .patient-card h3 {
+        border-bottom: 1px solid #ddd;
+        padding: 10px;
+        text-transform: uppercase;
+        margin: 0;
+      }
+      .patient-card small {
+        display: block;
+        color: grey;
+      }
+      .patient-card ul {
+        display: flex;
+        list-style: none;
+        padding: 10px 0;
+        justify-content: space-around;
+      }
+      .patient-card li {
+        position: relative;
+        flex: 1;
+      }
+      .patient-card li:not(:nth-child(1)):before {
+        content: "";
+        position: absolute;
+        left: 0;
+        border-left: 1px solid #ddd;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="qiscus-widget"></div>
+    <!-- built files will be auto injected -->
+    <script>
+      $(() => {
+        // let's setup options for our widget
+        window.qiscusUIEmailMode = true;
+        if (window.adsTracker) {
+          window.adsTracker.baseUrl = 'https://ads-tracker-api-stage.qiscus.io';
+          window.adsTracker.appId = 'doup-exj0jetllc7cecxc';
+          window.adsTracker.secretToken = 'YOUR_SECRET_TOKEN';
+        }
+        if (window.aiAssistant) {
+          window.aiAssistant.baseURL = `https://chatgpt-staging.qiscus.io`;
+          window.aiAssistant.appId = `doup-exj0jetllc7cecxc`;
+          window.aiAssistant.authorization = `YOUR_AUTHORIZATION`;
+        }
+        // ads tracker dev mode
+        QiscusSDK.core.init({
+          AppId: 'doup-exj0jetllc7cecxc',
+          mode: 'wide',
+          options: {
+            presenceCallback(data) {
+              // console.info('presence data', data);
+            },
+            roomClearedCallback(data) {
+              console.log('room cleared', data);
+            },
+            commentDeletedCallback(data) {
+              console.log('deleted', data);
+            },
+            commentDeliveredCallback(data) {
+              console.log('delivered', data);
+            },
+            newMessagesCallback(comments) {
+              console.log('isi comments', comments);
+            },
+            commentReadCallback(data) {
+              console.log('read', data, data.comment.id, data.comment.message);
+            },
+            headerClickedCallback() {
+              console.info('clicked');
+            },
+            messageInfoCallback(data) {
+              console.info('message info data', data);
+            },
+            // When we're success login into qiscus SDK we'll have a 1-on-1 chat to user@example.com
+            // You can change this to any user you have on your AppId, e.g: contact@your_company.com, etc
+            loginSuccessCallback(data) {
+              QiscusUI.chatGroup(355740140);
+            },
+            sentMessageCallback(data) {
+              console.log('send message callback', data);
+            },
+            // typingCallback(data) { console.info('isi typing', data); },
+          },
+          customTemplate: true,
+          templateFunction(comment) {
+            return false;
+          },
+        });
+
+        // login to qiscus
+        const verifyResponse = {
+          user: {
+            active: true,
+            app: {
+              code: 'doup-exj0jetllc7cecxc',
+              id: 129663,
+              id_str: '129663',
+              name: 'doup',
+            },
+            avatar: {
+              avatar: {
+                url: 'https://d1edrlpyc25xu0.cloudfront.net/kiwari-prod/image/upload/D1se5xo40I/1516941944-Screen_Shot_2018-01-26_at_11.45.20.png'
+              },
+            },
+            avatar_url: 'https://d1edrlpyc25xu0.cloudfront.net/kiwari-prod/image/upload/D1se5xo40I/1516941944-Screen_Shot_2018-01-26_at_11.45.20.png',
+            email: 'user@example.com',
+            extras: {
+              is_customer: false,
+              type: 'agent',
+              user_bubble_color: null,
+            },
+            id: 909873091,
+            id_str: '909873091',
+            last_comment_id: 0,
+            last_comment_id_str: '0',
+            last_sync_event_id: 1724814597333218300,
+            pn_android_configured: true,
+            pn_ios_configured: true,
+            rtKey: 'somestring',
+            token: 'YOUR_IDENTITY_TOKEN',
+            username: 'Klinik Q',
+          },
+        };
+
+        QiscusSDK.core.setUserWithIdentityToken(verifyResponse);
+
+        // render the widget
+        QiscusSDK.render();
+        QiscusUI.autoExpandWidget = true;
+        QiscusUI.isPublishTyping = true;
+        QiscusUI.emptyStateUrl = 'https://web.kiwari.id/static/img/emoji-chat.png';
+        QiscusUI.setCustomColors({
+          // headerBackgroundColor: '#1abc9c',
+          // headerTitleColor: '#ecf0f1',
+          // headerIconColor: '#ecf0f1',
+
+          // statusOnlineColor: '#fff',
+          // statusOfflineColor: '#fff',
+          // statusTypingColor: '#fff',
+
+          widgetButtonBackgroundColor: '#1abc9c',
+          widgetButtonTextColor: '#fff',
+
+          // formMessageIconColor: '#ccc',
+          // formMessageIconHoverColor: colors.green,
+          // formMessagePlaceholderColor: colors.mediumGrey,
+          // formMessageTextColor: 'red',
+
+          bubleLeftColor: '#efefef',
+          // bubleLeftTextColor: '#fff',
+          bubleRightColor: '#27B199',
+          bubleRightTextColor: '#fff',
+
+          // messageTimeColor: 'red',
+          // messageStatusIconColor: 'red',
+          // messageFailedIconColor: 'red',
+        });
+      });
+    </script>
+  </body>
+</html>

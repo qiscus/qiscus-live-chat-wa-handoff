@@ -1,0 +1,61 @@
+// The Vue build version to load with the `import` command
+// (runtime-only or standalone) has been set in webpack.base.conf with an alias.
+import Vue from 'vue';
+import Toasted from 'vue-toasted';
+import QiscusWidget from './App';
+import QiscusCore from './lib/SDKCore';
+import HttpClient from './lib/aiAssistant';
+import AdsTracker from './lib/adsTracker';
+import QENV from './lib/qenv';
+import { maskSystemEventAgentName } from './helpers/systemEventMask';
+import { customerText, getCustomerLocale } from './lib/customerLocale';
+
+const aiAssistant = new HttpClient();
+const adsTracker = new AdsTracker();
+const qenv = new QENV();
+if (typeof window !== 'undefined') {
+  window.aiAssistant = aiAssistant;
+  window.adsTracker = adsTracker;
+  window.qenv = qenv;
+  // Expose the system-event masker so the legacy inbox blade (which is not part
+  // of this bundle) can reuse the exact same logic for the room-list last-message
+  // preview — getLastComment() in inbox.blade.php / supervisor/inbox.blade.php.
+  // Keeps a single source of truth instead of a third copy of the regex.
+  window.maskSystemEventAgentName = maskSystemEventAgentName;
+}
+
+Vue.use(Toasted, {
+  position: 'bottom-right',
+  duration: 3000,
+  theme: 'bubble',
+});
+Vue.config.productionTip = false;
+Vue.prototype.$core = QiscusCore;
+Vue.prototype.$customerText = function customerTextForWidget(key, values) {
+  const options = this.$core && this.$core.options;
+  const browserLanguages = typeof navigator !== 'undefined'
+    ? (navigator.languages && navigator.languages.length ? navigator.languages : navigator.language)
+    : '';
+  return customerText(key, options && options.customerLocale, browserLanguages, values);
+};
+
+function renderSDK() {
+  /* eslint-disable no-new */
+  const options = QiscusCore.options || {};
+  if (options.customerLocale === 'auto' && typeof document !== 'undefined') {
+    const browserLanguages = typeof navigator !== 'undefined'
+      ? (navigator.languages && navigator.languages.length ? navigator.languages : navigator.language)
+      : '';
+    document.documentElement.lang = getCustomerLocale('auto', browserLanguages);
+  }
+  new Vue({
+    render(h) {
+      return h(QiscusWidget);
+    },
+  }).$mount('#qiscus-widget');
+}
+
+export default {
+  render: renderSDK,
+  core: QiscusCore,
+};

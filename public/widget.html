@@ -1,18 +1,18 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <title>Live Chat</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#27b199" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/img/pwa/icon-192.png" />
-    <link rel="apple-touch-icon" href="/img/pwa/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="img/pwa/icon-192.png" />
+    <link rel="apple-touch-icon" href="img/pwa/apple-touch-icon-180.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Live Chat" />
-    <script src="/js/push/handoff-push.js"></script>
+    <script src="js/push/handoff-push.js"></script>
     <style>
       html,
       body {
@@ -42,44 +42,103 @@
     </style>
   </head>
   <body>
-    <div id="handover-status">Menghubungkan…</div>
+    <div id="handover-status">Connecting…</div>
     <script>
       /**
        * Mount the QismoFull bundle served by this same Worker
        * (/js/qismo-full-v5.js, copied from multichannel-frontend). The token
        * stays in the URL fragment, never sent in requests.
        *
-       * Production API/iframe hosts are the default. page_url may override:
-       *   https://<worker>/widget.html?scriptUrl=...&baseUrl=...&iframeUrl=...#t=<token>
-       * The wrapper also passes baseUrl/iframeUrl as QismoFull options so
-       * older bundles that do not read the query string still work.
-       * Overrides only accept Qiscus hosts, localhost, or (scriptUrl only)
-       * this page's own origin; otherwise a crafted link could run foreign JS
-       * or send the invite token elsewhere.
+       * The bundle and the handoff room iframe are always served by THIS Worker
+       * (nothing is loaded from another repo's deployment). Only the API host is
+       * configurable; page_url may override it:
+       *   https://<worker>/widget.html?baseUrl=...#t=<token>
+       * `scriptUrl` may point at a Qiscus host, localhost or this page's own
+       * origin (testing a bundle build). `iframeUrl` is no longer read: an old
+       * link that still carries it is simply ignored.
+       * Overrides only accept Qiscus hosts or localhost; otherwise a crafted link
+       * could run foreign JS or send the invite token elsewhere.
        */
+      // Served under a path prefix means qismo-api is proxying this app: the API is then
+      // this page's own origin, which is the default and is accepted as baseUrl.
+      var prefixed = new URL(".", location.href).pathname !== "/";
       var DEFAULTS = {
-        scriptUrl: new URL("/js/qismo-full-v5.js", location.href).href,
-        baseUrl: "https://qismo.qiscus.com",
-        iframeUrl: "https://omnichannel.qiscus.com",
+        scriptUrl: new URL("js/qismo-full-v5.js", location.href).href,
+        baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com",
+        // The room is served next to this page, under the same path prefix (no trailing slash:
+        // QismoFull appends "/iframes/v5/...").
+        iframeUrl: new URL(".", location.href).href.replace(/\/$/, ""),
       };
       var statusEl = document.getElementById("handover-status");
+      // Self-contained EN/ID copy so these messages stay localized even when
+      // /js/push/handoff-push.js fails to load. Locale: navigator.languages in
+      // order, then navigator.language; English unless an `id` tag comes first.
+      var FALLBACK_TEXT = {
+        en: {
+          "page.connecting": "Connecting…",
+          "page.missing_token": "This link is incomplete. Please request a new link through WhatsApp.",
+          "page.already_used": "This link has already been used. Send us another message on WhatsApp to get a new link.",
+          "page.invalid_token": "This link is invalid or has expired. Please request a new one.",
+          "page.session_over": "This conversation has moved back to WhatsApp. Please check your WhatsApp.",
+          "page.too_many_requests": "Too many attempts. Please try again shortly.",
+          "page.network_error": "Unable to connect to the server. Check your connection and reload the page.",
+          "page.invalid_script": "The widget configuration is invalid.",
+          "page.session_expired": "Your chat session has ended. Please request a new link through WhatsApp.",
+          "page.no_session": "There is no active conversation in this app yet.",
+          "page.unknown": "Something went wrong. Please reload the page.",
+        },
+        id: {
+          "page.connecting": "Menghubungkan…",
+          "page.missing_token": "Link tidak lengkap. Silakan minta link baru lewat WhatsApp.",
+          "page.already_used": "Link ini sudah dipakai. Kirim pesan lagi di WhatsApp untuk mendapat link baru.",
+          "page.invalid_token": "Link tidak berlaku atau sudah kedaluwarsa. Silakan minta link baru.",
+          "page.session_over": "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
+          "page.too_many_requests": "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
+          "page.network_error": "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
+          "page.invalid_script": "Konfigurasi widget tidak valid.",
+          "page.session_expired": "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
+          "page.no_session": "Belum ada percakapan aktif di aplikasi ini.",
+          "page.unknown": "Terjadi kesalahan. Silakan muat ulang halaman.",
+        },
+      };
+      function detectLocale() {
+        var nav = typeof navigator === "undefined" ? null : navigator;
+        var list = [];
+        try {
+          if (nav && nav.languages && nav.languages.length) list = Array.prototype.slice.call(nav.languages);
+          else if (nav && nav.language) list = [nav.language];
+        } catch (_) {}
+        for (var i = 0; i < list.length; i++) {
+          var tag = list[i];
+          if (typeof tag !== "string") continue;
+          if (/^id(?:[-_]|$)/i.test(tag)) return "id";
+          if (/^en(?:[-_]|$)/i.test(tag)) return "en";
+        }
+        return "en";
+      }
+      var locale = detectLocale();
+      document.documentElement.lang = locale;
+      var text = function (key) {
+        return FALLBACK_TEXT[locale][key] || FALLBACK_TEXT.en[key] || key;
+      };
+      statusEl.textContent = text("page.connecting");
 
       var PESAN = {
-        missing_token: "Link tidak lengkap. Silakan minta link baru lewat WhatsApp.",
-        already_used: "Link ini sudah dipakai. Kirim pesan lagi di WhatsApp untuk mendapat link baru.",
-        invalid_token: "Link tidak berlaku atau sudah kedaluwarsa. Silakan minta link baru.",
-        session_over: "Percakapan ini sudah dilanjutkan di WhatsApp. Silakan cek WhatsApp Anda.",
-        too_many_requests: "Terlalu banyak percobaan. Coba lagi sesaat lagi.",
-        network_error: "Gagal terhubung ke server. Periksa koneksi Anda dan muat ulang halaman.",
-        invalid_script: "Konfigurasi widget tidak valid.",
-        session_expired: "Sesi percakapan sudah berakhir. Silakan minta link baru lewat WhatsApp.",
-        no_session: "Belum ada percakapan aktif di aplikasi ini.",
-        unknown: "Terjadi kesalahan. Silakan muat ulang halaman.",
+        missing_token: text("page.missing_token"),
+        already_used: text("page.already_used"),
+        invalid_token: text("page.invalid_token"),
+        session_over: text("page.session_over"),
+        too_many_requests: text("page.too_many_requests"),
+        network_error: text("page.network_error"),
+        invalid_script: text("page.invalid_script"),
+        session_expired: text("page.session_expired"),
+        no_session: text("page.no_session"),
+        unknown: text("page.unknown"),
       };
 
       // Query override, restricted to Qiscus hosts over HTTPS or localhost;
-      // scriptUrl/iframeUrl may also point at this page's own origin (bundle and
-      // handoff room served by this Worker).
+      // scriptUrl may also point at this page's own origin (bundle served by this
+      // Worker), and so may baseUrl when served under a path prefix (see DEFAULTS).
       // Returns the default when absent, null when present but not allowed.
       function fromQuery(name) {
         var raw = new URLSearchParams(location.search).get(name);
@@ -89,7 +148,7 @@
           var host = url.hostname;
           var local = host === "localhost" || host === "127.0.0.1";
           var qiscus = /(^|\.)qiscus\.(com|io)$/.test(host);
-          var self = name !== "baseUrl" && url.origin === location.origin;
+          var self = (name === "scriptUrl" || (name === "baseUrl" && prefixed)) && url.origin === location.origin;
           if (self || (url.protocol === "https:" && qiscus) || (local && /^https?:$/.test(url.protocol))) {
             return name === "scriptUrl" ? url.href : url.origin;
           }
@@ -151,13 +210,13 @@
       var env = {
         scriptUrl: fromQuery("scriptUrl"),
         baseUrl: fromQuery("baseUrl"),
-        iframeUrl: fromQuery("iframeUrl"),
+        iframeUrl: DEFAULTS.iframeUrl,
       };
       if (!env.scriptUrl || !env.baseUrl || !env.iframeUrl) {
         statusEl.textContent = PESAN.invalid_script;
       } else {
         try {
-          push = window.HandoffPush ? window.HandoffPush.start({ iframeUrl: env.iframeUrl }) : null;
+          push = window.HandoffPush ? window.HandoffPush.start({ baseUrl: env.baseUrl }) : null;
         } catch (_) {
           push = null;
         }

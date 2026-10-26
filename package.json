@@ -4,13 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "alchemy dev",
+    "start": "bun src/server.ts",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "build:client": "bun scripts/build-client.ts",
     "icons": "bun scripts/gen-icons.ts",
     "test": "bun test",
-    "test:e2e": "bun test ./e2e"
+    "test:e2e": "bun test ./e2e",
+    "build:vendor": "bun scripts/build-vendor.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260917.1",

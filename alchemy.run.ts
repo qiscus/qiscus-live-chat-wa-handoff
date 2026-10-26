@@ -1,7 +1,7 @@
 /**
  * Alchemy IaC entrypoint for live-handover-widget.
  *
- * Provisions ONE Cloudflare Worker: the hosted WA -> Live Chat page (spec
+ * Provisions ONE Cloudflare Worker per stage (see STAGE_DOMAINS): the hosted WA -> Live Chat page (spec
  * §8's "halaman client" host form), serving `src/worker.ts` (Hono, the
  * landing note at `/`) plus the static `widget.html` sample page from
  * `./public/`. The page loads the QismoFull bundle from qismo-stag2.
@@ -16,6 +16,16 @@ import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Effect from "effect/Effect"
 import { PUSH_ENV_KEYS } from "./src/push/config"
+
+// Custom domain per stage. The stage MUST be passed explicitly (--stage):
+// Alchemy otherwise defaults to live_$USER, which would create a second Worker
+// that tries to claim the production domain. Unknown stages fail the deploy.
+//   live_afief -> production (the stage the Worker was first deployed under)
+//   staging    -> trial deploys before production
+export const STAGE_DOMAINS: Record<string, string> = {
+  live_afief: "handoff.zroconf.web.id",
+  staging: "handoff-stag.zroconf.web.id",
+}
 
 // Public Web Push (FCM) config, read from the deploying shell's environment.
 // Only keys that are set are bound, as plain_text (they are public client
@@ -35,6 +45,13 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
+    const stage = yield* Alchemy.Stage
+    const domain = STAGE_DOMAINS[stage]
+    if (!domain) {
+      return yield* Effect.die(
+        new Error(`unknown stage "${stage}": pass --stage ${Object.keys(STAGE_DOMAINS).join(" | ")}`),
+      )
+    }
     const worker = yield* Cloudflare.Worker("widget", {
       main: "src/worker.ts",
       assets: {
@@ -48,10 +65,8 @@ export default Alchemy.Stack(
       },
       workersDev: true,
       env: pushEnv,
-      // Keep the existing sample alias attached when updating this Worker.
-      // Replace with a domain/zone you control before deploying your own copy.
       domain: {
-        name: "handoff.zroconf.web.id",
+        name: domain,
         zoneName: "zroconf.web.id",
       },
     })

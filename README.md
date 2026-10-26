@@ -26,7 +26,7 @@ The sample defaults to Qiscus production:
 
 - Widget bundle: `/js/qismo-full-v5.js`, served by this same Worker
 - API base URL: `https://qismo.qiscus.com`
-- Live Chat iframe host: `https://omnichannel.qiscus.com`
+- Live Chat room (iframe): `/iframes/v5/<app>/live-handover-room`, served by this same Worker (no other host is ever used)
 
 Use the resulting Worker URL as the `page_url` in the WhatsApp handoff settings:
 
@@ -34,37 +34,41 @@ Use the resulting Worker URL as the `page_url` in the WhatsApp handoff settings:
 https://<worker-host>/widget.html
 ```
 
-The page loads `public/js/qismo-full-v5.js`, a copy of the `qismo-full-v5.js`
-bundle built in `multichannel-frontend` (`qismo-widget`). Bundling it here keeps
-the widget working while the Qiscus-hosted copy is missing or outdated. To
-update it, rebuild in `multichannel-frontend` and copy `public/js/qismo-full-v5.js`
-(and its `.map`) into `public/js/` here, then redeploy.
+The page loads `public/js/qismo-full-v5.js`, built from `packages/qismo-widget`
+in this repo (a fork of the Qiscus `qismo-widget`, see `packages/UPSTREAM.md`).
+The room's SDK bundle is built from `packages/qiscus-ui-vue` into
+`public/js/qiscus-handoff.js` and `public/css/qiscus-handoff.css`. Rebuild both
+with `bun run build:vendor`, then redeploy. Nothing is fetched from another
+repo's deployment.
 
-The page reads the invite token and optional `scriptUrl` / `baseUrl` /
-`iframeUrl` overrides from the page URL, exchanges the token with the configured
-API, then opens the returned room. Production hosts are used when no overrides
-are present. No app ID needs to be embedded in this handoff-only page.
+The page reads the invite token and optional `scriptUrl` / `baseUrl`
+overrides from the page URL, exchanges the token with the configured API, then
+opens the room iframe from this same Worker. The production API is used when no
+override is present. No app ID needs to be embedded in this handoff-only page.
+The room is never loaded from another host, so the widget does not depend on any
+other repo's deployment; `iframeUrl` is no longer read (an old link that still
+carries it is ignored).
 
-For another environment, the settings URL can override the API and iframe hosts:
+For another environment (stag2, stag3, ...), the settings URL overrides only the API:
 
 ```text
-https://<worker-host>/widget.html?baseUrl=<api-base-url>&iframeUrl=<iframe-host>
+https://<worker-host>/widget.html?baseUrl=<api-base-url>
 ```
 
-For staging, override only the API and iframe hosts; the bundled script stays:
+For staging, the bundled script and room stay on this Worker:
 
 ```text
-https://<worker-host>/widget.html?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io&iframeUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
+https://<worker-host>/widget.html?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
 ```
 
 `scriptUrl` can still point at another bundle (e.g. a Qiscus-hosted build).
 
-`scriptUrl`, `baseUrl` and `iframeUrl` only accept HTTPS URLs on `qiscus.com` /
+`scriptUrl` and `baseUrl` only accept HTTPS URLs on `qiscus.com` /
 `qiscus.io` (and their subdomains), or `localhost` / `127.0.0.1` for local
 builds; `scriptUrl` also accepts this page's own origin. Anything else is
 refused so a crafted link cannot inject arbitrary
 JavaScript or send the invite token to a foreign host. The page passes
-`baseUrl` / `iframeUrl` to `QismoFull` as options, so it works with bundles that
+`baseUrl` to `QismoFull` as an option, so it works with bundles that
 do not parse those query params themselves.
 
 Never put an app secret or a raw invite token in query parameters.
@@ -110,6 +114,12 @@ agent replies in the Omnichannel dashboard
 
 ### Required configuration (public values, names only)
 
+> **Multi-app Workers:** these env values are the *global* config (one Firebase
+> web app for the whole Worker). To serve several apps (e.g. production and
+> stag2) from one deployment, let each app's config come from qismo-api instead,
+> see [Multiple apps](#multiple-apps-per-app-push-config-from-qismo-api). The
+> env stays as the fallback and keeps working unchanged.
+
 Set these in the environment when running `alchemy deploy`. Each one that is
 set is bound to the Worker as `plain_text`. None of them is secret: they are the
 Firebase **web app** config and the Web Push certificate **public** key. Never
@@ -125,7 +135,6 @@ or in the Worker.
 | `FIREBASE_VAPID_KEY`           | Project settings → Cloud Messaging → Web Push certificates (public key) |
 | `FIREBASE_AUTH_DOMAIN`         | optional                                                              |
 | `PUSH_APP_CODES`               | optional, comma-separated Qiscus app codes allowed to enable push     |
-| `PUSH_ROOM_ORIGINS`            | optional, TEMPORARY: comma-separated origins of a cross-origin room iframe for which push is still allowed (see Limitations) |
 
 If any required value is missing or malformed, push stays off. `GET
 /push/config` returns `{"status":"unconfigured","missing":[…],"invalid":[…]}`
@@ -133,15 +142,106 @@ If any required value is missing or malformed, push stays off. `GET
 resource or storage binding is needed.
 
 **Console trail.** Every reason push stays off (`unconfigured`,
-`cross-origin-room`, `app-not-enabled`, `unsupported`) is logged with
+`app-not-enabled`, `unsupported`) is logged with
 `console.info("[handoff-push] …")`. Each step (start, exchange seen, state
 changes, permission, FCM token, `set_user_device_token` status, service worker
 registration/updates) is logged with `console.debug`, so enable the **Verbose**
 level in DevTools. No token, e-mail or message text is ever logged.
 
+### Multiple apps (per-app push config from qismo-api)
+
+One deployed Worker can serve several Qiscus apps, each with **its own Firebase
+project** (e.g. a production app and a stag2 app), without any per-app env.
+
+**Where the config comes from.** An app's Firebase **web** config + VAPID public
+key are stored in qismo-api, set per FCM key in **Omnichannel → Settings →
+Notifications**, and served publicly per app:
+
+```text
+GET {baseUrl}/api/v2/live_handover/push_config?app_code=<code>
+  200 {"status":"configured","firebase":{"apiKey","authDomain"?,"projectId","messagingSenderId","appId"},"vapidKey":"…"}
+  200 {"status":"unconfigured"}        400 malformed app_code
+  CORS allowed, Cache-Control: public, max-age=300
+```
+
+(The endpoint is being built in qismo-api; this repo only consumes it. Until it
+is deployed, every app simply falls back to the Worker env, see below.)
+
+**Setup per app.** Give each app its own `page_url`; the host in `baseUrl` is
+the qismo-api that exchanges the invite *and* serves that app's push config:
+
+```text
+# production app (defaults): no query needed
+https://<worker-host>/widget.html
+
+# stag2 app
+https://<worker-host>/widget.html?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
+```
+
+There is no `/a/<app>/widget.html` page form: the app code only arrives with the
+invite exchange, and the backend host (prod vs stag2) cannot be derived from it,
+so `baseUrl` stays in the page URL. `/a/<app>/sw.js` exists only as the
+per-app service-worker script (below).
+
+**Flow.** After the exchange tells the page the app code (for a first invite:
+from the room iframe path `/iframes/v5/<app>/live-handover-room` that QismoFull
+builds from the exchange, before the room is mounted), the page fetches that
+app's config from `{baseUrl}/api/v2/live_handover/push_config` (4 s timeout,
+no cookies), validates it with the **same rules as the Worker env**
+(`invalidFirebaseFields` in `src/push/config.ts`), and uses it.
+
+**Precedence.**
+
+| Backend answer for the app                              | Result                                                                                                  |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `configured` and valid                                  | **Backend wins**: that Firebase config, app counts as enabled (our same-origin room on the first invite, no `PUSH_APP_CODES` entry needed), own SW scope `/a/<app>/` |
+| `unconfigured`, 400/404/5xx, unreachable, timeout, garbage, any invalid field | **Exactly the Worker env behaviour** (global config, `PUSH_APP_CODES`, root scope): Weaper on prod is unchanged, before and after qismo-api deploys the endpoint |
+
+If the env has no Firebase config either, push is off for that app (`unconfigured`
+in the console).
+
+> Keep `PUSH_APP_CODES` set on a multi-app Worker that still has global
+> `FIREBASE_*`. Without it, an app with no backend config falls back to the
+> *global* Firebase project, and its tokens never deliver unless that project
+> matches the app's FCM key.
+
+**Security.** Firebase config is accepted only from the Worker env or from
+qismo-api at the page's validated `baseUrl` (HTTPS `qiscus.com` / `qiscus.io`,
+or localhost; re-checked inside the bundle). It is never read from the URL
+query or from `postMessage`. A config is only ever used for the app code it
+was fetched for; a service worker refuses a context that belongs to another app.
+
+**One service-worker scope per app.** A push subscription belongs to one
+service-worker registration and one VAPID key, so two Firebase projects must not
+share one. An app with backend config registers `/a/<app>/sw.js` (the same
+`sw.js`, served by the Worker under that path (its directory is its scope),
+never cached) with scope `/a/<app>/`; its subscription, Firebase token and SW
+context (IndexedDB key `/a/<app>/`) are separate from every other app's.
+A notification click reopens `/widget.html?source=notification&baseUrl=…`
+for that app's own backend (stored by the page, never taken from the push
+payload). The root worker (`/sw.js`, scope `/`) stays registered for the PWA
+shell and for apps still on the Worker env.
+
+- **Existing Weaper registrations (Worker env, root scope) are untouched** on
+  upgrade: no re-subscribe, same IndexedDB key, same notification data.
+- If the backend later starts serving config for an app that was on the env, the
+  next load registers it under `/a/<app>/` with the new project, then removes
+  the old token (`remove_user_device_token`) and unsubscribes the old root
+  subscription: one automatic re-subscribe, no user action. If the app's
+  permission is still granted and the opt-in flag is set this happens silently.
+- **One active customer session per browser** (unchanged): the stored session,
+  registration and opt-in flag are single-slot. A new invite from another app
+  replaces the previous identity, whose push registration is first removed in
+  *its own* scope and with its own credentials. Two apps are therefore never
+  subscribed at the same time in one browser; they just cannot clobber each
+  other's subscription when switching.
+
+**Console trail.** `[handoff-push] push config {appId, source}` says whether an
+app used the backend or the Worker env.
+
 ### Service worker updates
 
-The page registers `/sw.js` with `updateViaCache: "none"` and calls
+The page registers `/sw.js` (and, per app, `/a/<app>/sw.js`) with `updateViaCache: "none"` and calls
 `registration.update()` when it becomes visible again (at most every 30
 minutes); the browser also re-checks on every navigation. A changed `sw.js`
 installs with `skipWaiting()` and takes over with `clients.claim()`, without
@@ -182,30 +282,11 @@ is put in a URL, the manifest or a cache.
 
 ### Limitations
 
-- **Cross-origin room (TEMPORARY allowance).** With the default `iframeUrl`
-  (`https://omnichannel.qiscus.com`) the room's own login is unreachable. When
-  that origin is listed in `PUSH_ROOM_ORIGINS`, the page reads QismoFull's own
-  exchange response once (in memory), calls `verify_identity_token` itself, and
-  stores the session as the same-origin room would. The nonce is not consumed
-  and an existing user's SDK token is not rotated, so the room's login is
-  unaffected. Resume after a refresh or notification click mounts the
-  same-origin room. The room cannot report "resolved" across origins, so the
-  session then ends only by TTL or a new invite. Without the allowance the page
-  reports `cross-origin-room`. Intended source of the list: the WA handoff
-  **Allowed domains** setting (`frame_ancestors`), which qismo-api exposes only
-  to authenticated callers today.
-- **Push guidance is a local-only chat bubble.** With the room on this origin
-  (our `live-handover-room`), the offer / iOS steps / enable button are drawn
-  as the last item of the room's message list, labelled "Hanya terlihat oleh
-  Anda". It is plain DOM in this browser: never sent with `sendComment`, never
-  stored in Omnichannel, invisible to the agent. With a cross-origin room
-  (`omnichannel.qiscus.com`) the page cannot touch the frame, so the same
-  content is shown as a floating banner instead. For apps in
-  `PUSH_APP_CODES` the page moves a first invite's room from the default
-  `omnichannel.qiscus.com` to this origin (same path and query; the remote
-  frame is held on `about:blank` until `/push/config` answers, so it never
-  spends the identity token), so the bubble also shows on the first visit,
-  e.g. in WhatsApp's in-app browser. Other apps keep the remote room.
+- **Push guidance is a local-only chat bubble.** The room is always on this
+  origin (our `live-handover-room`), so the offer / iOS steps / enable button are
+  drawn as the last item of the room's message list, labelled "Hanya terlihat
+  oleh Anda". It is plain DOM in this browser: never sent with `sendComment`,
+  never stored in Omnichannel, invisible to the agent.
 - **Android in-app browsers** (WhatsApp/Instagram/Facebook WebView, UA
   `; wv)` or an app token) have no Web Push: the bubble tells the customer to
   open the link in Chrome (menu ⋮ → open in Chrome, or "Salin link"). There is
@@ -249,6 +330,12 @@ localhost-only seam (`window.__HANDOFF_PUSH_TEST__`), and pushes are injected
 into the real service worker via CDP. No real Qiscus app, Firebase project, FCM
 or Flash was exercised.
 
+The per-app flow is tested against an in-test **stub** of
+`GET /api/v2/live_handover/push_config` (two synthetic Firebase projects on one
+origin, backend unconfigured/404/unreachable/invalid, no-env, hostile query and
+`postMessage`). The real qismo-api endpoint, real FCM tokens and delivery per
+app were **not** exercised.
+
 ### Rebuilding the browser bundles
 
 `src/client/*` is bundled into `public/js/push/` by `bun run build:client`. The
@@ -278,3 +365,31 @@ node node_modules/.bin/alchemy deploy --yes --no-input
 The existing deployment also uses `handoff.zroconf.web.id` as a sample alias.
 Before deploying your own copy, replace that domain and zone in `alchemy.run.ts`
 with a domain in a Cloudflare zone you control, or remove the `domain` property.
+
+## Run as a container (no Cloudflare)
+
+The same app runs on plain Bun: `src/server.ts` serves `public/` (like the
+Worker's asset layer: literal `.html`, no redirects, ETag + `must-revalidate`,
+gzip) and mounts the Worker's Hono routes. The only platform differences are the
+`ASSETS` binding (replaced by `src/static.ts`) and the Worker env, which becomes
+process environment variables.
+
+```bash
+docker build -t qiscus-wa-handoff .
+docker run --rm -p 8080:8080 qiscus-wa-handoff
+# Web Push is optional; pass the PUBLIC Firebase web config / VAPID key as env:
+docker run --rm -p 8080:8080 -e FIREBASE_API_KEY=... -e FIREBASE_PROJECT_ID=... \
+  -e FIREBASE_MESSAGING_SENDER_ID=... -e FIREBASE_APP_ID=... -e FIREBASE_VAPID_KEY=... \
+  qiscus-wa-handoff
+```
+
+- Env: `PORT` (default 8080), `HOST`, `PUBLIC_DIR`, plus the `FIREBASE_*` /
+  `PUSH_APP_CODES` names from "Web Push". Never put a service-account JSON here.
+- `bun run start` runs it without Docker.
+- The image does not rebuild the widget: `public/` is copied as committed. After
+  changing `packages/`, run `bun run build:vendor` / `bun run build:client`, commit,
+  then rebuild the image.
+- It speaks plain HTTP and sets no TLS/CORS/compression policy beyond the above:
+  put it behind the platform's ingress/load balancer. Keep `/widget.html` free of
+  rewrites or redirects (the invite token lives in the URL fragment).
+- Healthcheck: `GET /widget.html` (built into the image).

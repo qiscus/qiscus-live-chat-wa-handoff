@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Live Chat</title>
+    <link rel="icon" href="/favicon.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      /* ponytail: ukuran & posisi iframe diatur CSS halaman, bukan JS. */
+      #qcw-iframe {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <script src="/js/qismo-full-v5.js"></script>
+    <script>
+      // Halaman chat berdiri sendiri: tanpa welcome, login, tombol X, dan chevron back.
+      //
+      // channel_id / display_name / unique_id TIDAK ditulis di sini — komponen
+      // membacanya dari query string halaman ini saat load, jadi satu halaman
+      // statis bisa melayani banyak customer:
+      //
+      //   /full.html?channel_id=1430&display_name=Rina&unique_id=628123456789
+      //
+      // Di alur handoff, URL itu yang dihasilkan redirector setelah /live_handover/exchange.
+      new QismoFull({
+        target: document.body,
+        props: {
+          appId: "zalda-vvq7pksvblaiy7s",
+          // Dev lokal. Produksi: qismoIframeUrl = host /iframes/v5, baseUrl = host API config.
+          options: {
+            qismoIframeUrl: "http://127.0.0.1:8181",
+            baseUrl: "http://127.0.0.1:8001",
+          },
+        },
+      });
+
+      // check: gagal kalau bentuk src iframe berubah (route, param AES, atau
+      // kalau is_channel_widget_enable bocor masuk lagi -> chevron kembali muncul).
+      setTimeout(function () {
+        var q = new URLSearchParams(location.search);
+        var el = document.getElementById("qcw-iframe");
+        if (!q.get("channel_id") || !q.get("display_name") || !q.get("unique_id")) {
+          console.log(
+            "[full-widget check] SKIP — buka dengan ?channel_id=…&display_name=…&unique_id=…"
+          );
+          return;
+        }
+        var src = (el || {}).src || "";
+        var ok =
+          src.indexOf("/full-widget/" + q.get("channel_id") + "?display_name=U2FsdGVkX1") > -1 &&
+          src.indexOf("unique_id=U2FsdGVkX1") > -1 &&
+          src.indexOf("channel_id=U2FsdGVkX1") > -1 &&
+          src.indexOf("is_channel_widget_enable") === -1;
+        console.log("[full-widget check] " + (ok ? "PASS" : "FAIL") + " :: " + src.slice(0, 110));
+      }, 8000);
+    </script>
+  </body>
+</html>

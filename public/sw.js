@@ -9,9 +9,9 @@
  * own and not a system event. The customer's SDK user is the same one the
  * WhatsApp room uses, so pushes for other rooms are expected and dropped.
  * The notification body is a plain-text preview of the agent's message (at most
- * PREVIEW_MAX characters; attachments become "Mengirim gambar/file"; no agent
- * name). Title, icon and click target are fixed: nothing else from the payload
- * is ever used for display or navigation.
+ * PREVIEW_MAX characters; attachments use a localized label; no agent name.
+ * Title, icon and click target are fixed: nothing else from the payload is ever
+ * used for display or navigation.
  *
  * Caching: only the static shell below, and only as an OFFLINE fallback: every
  * shell request goes to the network first and refreshes the cached copy, so a
@@ -28,23 +28,39 @@
 /* global self, clients, caches, indexedDB */
 
 const TITLE = "Live Chat"
-const BODY = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
+const BODY_EN = "You have a new reply. Tap to open Live Chat."
+const BODY_ID = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
 const PREVIEW_MAX = 120
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)(\?|#|$)/i
-const ICON = "/img/pwa/icon-192.png"
-const BADGE = "/img/pwa/badge-96.png"
-const RESUME_PATH = "/widget.html"
-const RESUME_URL = "/widget.html?source=notification"
 const HOUSEKEEPING_TAG = "handoff-housekeeping"
 
 const SHELL_CACHE = "handoff-shell-v2"
 const SHELL_PREFIX = "handoff-shell-"
-const SHELL = ["/offline.html", "/manifest.webmanifest", "/img/pwa/icon-192.png", "/img/pwa/icon-512.png"]
 
 // MUST match src/client/swContext.ts.
 const CTX_DB = "qiscus-handoff-push"
 const CTX_STORE = "ctx"
 const CTX_KEY = "current"
+
+// One worker per scope: the legacy root worker (Worker-env config) and, per app
+// whose Firebase config comes from qismo-api, a worker registered from
+// /a/<app>/sw.js with scope /a/<app>/ (its own push subscription / VAPID key).
+// A per-app worker only ever reads ITS app's context.
+const SCOPE_PATH = new URL(self.registration.scope).pathname
+const SCOPE_PARTS = /^(.*\/)a\/([A-Za-z0-9_-]{1,64})\/$/.exec(SCOPE_PATH)
+const SCOPE_APP = SCOPE_PARTS ? SCOPE_PARTS[2] : null
+const MY_CTX_KEY = SCOPE_APP ? SCOPE_PATH : CTX_KEY
+// The path prefix the app is served under ("/" on its own domain, or a sub-path
+// when another server proxies it): the root worker's scope is the prefix itself,
+// a per-app worker's scope is <prefix>a/<app>/.
+const BASE = SCOPE_PARTS ? SCOPE_PARTS[1] : SCOPE_PATH
+const ICON = BASE + "img/pwa/icon-192.png"
+const BADGE = BASE + "img/pwa/badge-96.png"
+const RESUME_PATH = BASE + "widget.html"
+const RESUME_URL = BASE + "widget.html?source=notification"
+const SHELL = [BASE + "offline.html", BASE + "manifest.webmanifest", BASE + "img/pwa/icon-192.png", BASE + "img/pwa/icon-512.png"]
+// The only shape a notification click may reopen (written by our own page).
+const RESUME_OK = new RegExp("^" + RESUME_PATH.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&") + "\\?[A-Za-z0-9_%.~=&:-]*$")
 
 // ------------------------------------------------------------------ context
 
@@ -64,11 +80,13 @@ function loadContext() {
     req.onsuccess = () => {
       const db = req.result
       try {
-        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(CTX_KEY)
+        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(MY_CTX_KEY)
         get.onsuccess = () => {
           db.close()
           const v = get.result
-          resolve(v && typeof v.roomId === "string" && typeof v.selfEmail === "string" ? v : null)
+          const ok = v && typeof v.roomId === "string" && typeof v.selfEmail === "string"
+          // An entry for another app under this scope is stale or tampered: push off.
+          resolve(ok && (!SCOPE_APP || v.appId === SCOPE_APP) ? v : null)
         }
         get.onerror = () => {
           db.close()
@@ -112,7 +130,7 @@ function digits(value) {
 }
 
 /** The fields the decision needs, plus the message preview for the body. */
-function extract(raw) {
+function extract(raw, locale) {
   const data = asObject(raw && raw.data)
   const inner = asObject(data.payload !== undefined ? data.payload : raw && raw.payload)
   return {
@@ -120,24 +138,25 @@ function extract(raw) {
     commentId: digits(inner.id) || digits(inner.id_str),
     type: typeof inner.type === "string" ? inner.type : null,
     email: typeof inner.email === "string" ? inner.email : null,
-    preview: preview(inner),
+    preview: preview(inner, locale),
   }
 }
 
-function attachmentLabel(url) {
-  return IMAGE_EXT.test(String(url || "")) ? "Mengirim gambar" : "Mengirim file"
+function attachmentLabel(url, locale) {
+  if (locale === "id") return IMAGE_EXT.test(String(url || "")) ? "Mengirim gambar" : "Mengirim file"
+  return IMAGE_EXT.test(String(url || "")) ? "Sending an image" : "Sending a file"
 }
 
 /**
  * Plain-text preview of an agent comment, or null (-> generic BODY).
  * Notification bodies are rendered as text by the browser, never as HTML.
  */
-function preview(comment) {
+function preview(comment, locale) {
   const extra = asObject(comment.payload)
-  if (comment.type === "file_attachment") return attachmentLabel(extra.url)
+  if (comment.type === "file_attachment") return attachmentLabel(extra.url, locale)
   if (typeof comment.message !== "string") return null
   const file = /^\s*\[file\]\s*(\S+)\s*\[\/file\]\s*$/i.exec(comment.message) // legacy SDK attachment text
-  if (file) return attachmentLabel(file[1])
+  if (file) return attachmentLabel(file[1], locale)
   const text = comment.message.replace(/\s+/g, " ").trim()
   if (!text) return null
   const chars = Array.from(text) // do not cut an emoji / surrogate pair in half
@@ -165,7 +184,7 @@ function isChatPage(client) {
 
 async function handlePush(raw) {
   const ctx = await loadContext()
-  const c = extract(raw)
+  const c = extract(raw, ctx && ctx.locale)
   const list = await clients.matchAll({ type: "window", includeUncontrolled: true })
 
   if (shouldAnnounce(c, ctx)) {
@@ -174,12 +193,12 @@ async function handlePush(raw) {
     const existing = await self.registration.getNotifications({ tag })
     if (existing.length) return // same message via another FCM credential
     await self.registration.showNotification(TITLE, {
-      body: c.preview || BODY,
+      body: c.preview || (ctx.locale === "id" ? BODY_ID : BODY_EN),
       icon: ICON,
       badge: BADGE,
       tag,
       renotify: false,
-      data: { v: 1 },
+      data: ctx.resume && RESUME_OK.test(ctx.resume) ? { v: 1, resume: ctx.resume } : { v: 1 },
     })
     return
   }
@@ -193,14 +212,15 @@ async function handlePush(raw) {
   shown.forEach((n) => n.close())
 }
 
-async function handleClick() {
+async function handleClick(data) {
+  const resume = data && typeof data.resume === "string" && RESUME_OK.test(data.resume) ? data.resume : RESUME_URL
   const list = await clients.matchAll({ type: "window", includeUncontrolled: true })
   const target = list.find(isChatPage)
   if (target) {
     await target.focus()
     return
   }
-  await clients.openWindow(RESUME_URL)
+  await clients.openWindow(resume)
 }
 
 // ------------------------------------------------------------------ shell cache
@@ -229,7 +249,7 @@ function routeFetch(event) {
 
   if (req.mode === "navigate" && url.pathname === RESUME_PATH) {
     event.respondWith(
-      fetch(req).catch(async () => (await caches.match("/offline.html")) || new Response("Offline", { status: 503 })),
+      fetch(req).catch(async () => (await caches.match(BASE + "offline.html")) || new Response("Offline", { status: 503 })),
     )
     return
   }
@@ -270,5 +290,5 @@ self.addEventListener("push", (event) => {
 })
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
-  event.waitUntil(handleClick())
+  event.waitUntil(handleClick(event.notification.data))
 })

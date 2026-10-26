@@ -10,7 +10,8 @@
  *
  * `widget.html` (static asset, served at `/widget.html`) does the actual
  * work: it loads the bundled script and passes production API/iframe
- * defaults (overridable via `?baseUrl=`, `?iframeUrl=`, `?scriptUrl=`).
+ * defaults (the API host is overridable via `?baseUrl=`; the bundle and the
+ * room iframe always come from this Worker).
  *
  * This Worker itself only serves `/` (a landing note), the handoff room at
  * `/iframes/v5/:app_code/live-handover-room`, `GET /push/config` (public FCM
@@ -20,6 +21,8 @@
  */
 import { Hono } from "hono"
 import { type PushEnv, readPushConfig } from "./push/config"
+
+const APP_CODE = /^[A-Za-z0-9_-]{1,64}$/
 
 type Bindings = { ASSETS: Fetcher } & PushEnv
 
@@ -32,6 +35,30 @@ const app = new Hono<{ Bindings: Bindings }>()
 app.get("/push/config", (c) => {
   c.header("Cache-Control", "no-store")
   return c.json(readPushConfig(c.env))
+})
+
+// Per-app service-worker script. A push subscription is bound to one service
+// worker registration and one VAPID key, so each app whose Firebase config
+// comes from qismo-api registers the same sw.js from its own path, giving it
+// its own scope (/a/<app>/) and subscription. The path alone limits the scope
+// (a worker may control its own directory), so no Service-Worker-Allowed header
+// is sent: a fixed "/a/<app>/" there would be wrong when this app is served under
+// a sub-path by a reverse proxy. Never cached, like /sw.js.
+app.get("/a/:appCode/sw.js", async (c) => {
+  const appCode = c.req.param("appCode")
+  if (!APP_CODE.test(appCode)) return c.text("Not found", 404)
+  const url = new URL(c.req.url)
+  url.pathname = "/sw.js"
+  url.search = ""
+  const asset = await c.env.ASSETS.fetch(new Request(url, { method: "GET" }))
+  if (!asset.ok) return c.text("Not found", 404)
+  return new Response(asset.body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  })
 })
 
 app.get("/", (c) => {
@@ -51,9 +78,9 @@ app.get("/", (c) => {
   hanya menerima invite yang sudah dibuat backend; tidak membuat invite atau
   mengirim pesan WhatsApp.</p>
   <p>Atur <code>page_url</code> ke
-  <code>/widget.html</code>. Bundle, API, dan iframe memakai host staging2
-  sementara fitur belum dipromosikan. Setelah promosi, ganti host ke production.
-  Override <code>baseUrl</code> dan <code>iframeUrl</code> via query parameter.</p>
+  <code>/widget.html</code>. Bundle dan iframe room selalu dilayani Worker ini;
+  API memakai production kecuali di-override lewat query parameter
+  <code>baseUrl</code> (mis. host staging).</p>
   <p>Backend menambahkan token sekali-pakai di fragment <code>#t=...</code> saat
   membuat link. Jangan menambahkan token secara manual.</p>
 </body>

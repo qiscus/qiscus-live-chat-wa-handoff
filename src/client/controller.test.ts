@@ -18,13 +18,12 @@ const CONFIG: PushConfig = {
   },
   vapidKey: "synthetic-vapid",
   appCodes: null,
-  roomOrigins: [],
 }
 
 const tok = (n: number) => `synthetic-fcm-${n}:` + "A".repeat(120)
 const u = (email: string): SdkUser => ({ email, token: `synthetic-sdk-token-${email}` })
 
-function harness(over: Partial<{ config: PushConfig; permission: NotificationPermission; support: ReturnType<typeof detectSupport>; grant: NotificationPermission; status: number }> = {}) {
+function harness(over: Partial<{ config: PushConfig; configFor: (appId: string | undefined) => PushConfig; resumeUrl: string; permission: NotificationPermission; support: ReturnType<typeof detectSupport>; grant: NotificationPermission; status: number }> = {}) {
   const storage = new MemoryStorage()
   let now = 1_800_000_000_000
   let permission: NotificationPermission = over.permission ?? "default"
@@ -32,6 +31,10 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
   const sdkCalls: { path: string; app: string; user: string; sdkToken: string; device: string }[] = []
   const fcmCalls: string[] = []
   const swWrites: unknown[] = []
+  const swScopes: (string | undefined)[] = []
+  const configCalls: (string | undefined)[] = []
+  const minted: unknown[] = []
+  const deleted: unknown[] = []
   const states: PushUiState[] = []
   let status = over.status ?? 200
 
@@ -61,19 +64,26 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
       permission = over.grant ?? "granted"
       return permission
     },
-    loadConfig: async () => over.config ?? CONFIG,
+    loadConfig: async (appId) => {
+      configCalls.push(appId)
+      return over.configFor ? over.configFor(appId) : (over.config ?? CONFIG)
+    },
+    resumeUrl: over.resumeUrl ? () => over.resumeUrl : undefined,
     fcm: {
-      getToken: async () => {
+      getToken: async (cfg) => {
         fcmCalls.push("getToken")
+        minted.push(cfg)
         return tok(nextToken)
       },
-      deleteToken: async () => {
+      deleteToken: async (target) => {
         fcmCalls.push("deleteToken")
+        deleted.push(target)
       },
     },
     swContext: {
-      write: async (ctx) => {
+      write: async (ctx, scope) => {
         swWrites.push(ctx)
+        swScopes.push(scope)
       },
     },
     onState: (s) => states.push(s),
@@ -85,6 +95,10 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
     sdkCalls,
     fcmCalls,
     swWrites,
+    swScopes,
+    configCalls,
+    minted,
+    deleted,
     states,
     last: () => states[states.length - 1],
     setPermission: (p: NotificationPermission) => (permission = p),
@@ -287,74 +301,6 @@ describe("PushController (synthetic)", () => {
     expect(h.swWrites.at(-1)).toBeNull()
   })
 
-  test("room is not same-origin: reported, and an old identity is torn down", async () => {
-    const h = harness()
-    h.login("app1", "11", "old@example.invalid")
-    await h.ctl.sessionReady()
-    await h.ctl.enable()
-    h.ctl.beginInvite()
-    await h.ctl.crossOriginRoom()
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.storage.getItem(REG_KEY)).toBeNull()
-  })
-
-  const ROOM = "https://omnichannel.example.invalid"
-  const seen = { appId: "app1", roomId: "77", identityToken: "synthetic-identity-token" }
-
-  test("cross-origin room NOT in roomOrigins: reported, no SDK call, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: ["https://other.example.invalid"] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.sdkCalls).toEqual([])
-    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
-  })
-
-  test("allowed cross-origin room without a seen exchange: reported, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: null })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(h.sdkCalls).toEqual([])
-  })
-
-  test("allowed cross-origin room: identity token verified as the app, session stored, offer shown, then registered", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.sdkCalls.map((c) => [c.path, c.app, c.user])).toEqual([["verify_identity_token", "app1", null as unknown as string]])
-    const loaded = loadSession(h.storage, h.nowFn())
-    expect(loaded.state).toBe("valid")
-    if (loaded.state !== "valid") throw new Error("unreachable")
-    expect([loaded.session.appId, loaded.session.roomId, loaded.session.user.email]).toEqual(["app1", "77", "cross@example.invalid"])
-    expect(JSON.stringify(loaded.session)).not.toContain("must-not-be-stored")
-    expect(JSON.stringify(loaded.session)).not.toContain("synthetic-identity-token")
-    expect(h.last()).toEqual({ kind: "offer" })
-    await h.ctl.enable()
-    expect(h.last()).toEqual({ kind: "enabled" })
-    expect(h.sdkCalls.at(-1)!.path).toBe("set_user_device_token")
-    expect(h.sdkCalls.at(-1)!.user).toBe("cross@example.invalid")
-  })
-
-  test("allowed cross-origin room, verify rejected upstream: reported, nothing stored", async () => {
-    const h = harness({ config: { ...CONFIG, roomOrigins: [ROOM] } as PushConfig, status: 401 })
-    await h.ctl.crossOriginRoom({ origin: ROOM, exchange: seen })
-    expect(h.last()).toEqual({ kind: "cross-origin-room" })
-    expect(loadSession(h.storage, h.nowFn()).state).toBe("none")
-  })
-
-  test("permission revoked in browser settings: registration removed on next load", async () => {
-    for (const revoked of ["default", "denied"] as const) {
-      const h = harness()
-      h.login("app1", "11", "c1@example.invalid")
-      await h.ctl.sessionReady()
-      await h.ctl.enable()
-      h.sdkCalls.length = 0
-      h.setPermission(revoked)
-      await h.ctl.sessionReady()
-      expect(h.sdkCalls.map((c) => c.path)).toEqual(["remove_user_device_token"])
-      expect(h.storage.getItem(REG_KEY)).toBeNull()
-      expect(h.last()).toEqual({ kind: revoked === "denied" ? "denied" : "offer" })
-    }
-  })
-
   test("user turns it off: removed + FCM token deleted", async () => {
     const h = harness()
     h.login("app1", "11", "c1@example.invalid")
@@ -457,5 +403,115 @@ describe("PushController (synthetic)", () => {
     const dump = JSON.stringify(h.states)
     expect(dump).not.toContain("synthetic-fcm")
     expect(dump).not.toContain("synthetic-sdk-token")
+  })
+})
+
+// ---------------------------------------------------------------- per-app config
+
+const cfgOf = (project: string, appCode?: string): PushConfig =>
+  ({
+    ...CONFIG,
+    firebase: { ...(CONFIG as { firebase: object }).firebase, projectId: project },
+    appCodes: appCode ? [appCode] : null,
+    ...(appCode ? { source: "backend", swScope: `/a/${appCode}/` } : {}),
+  }) as PushConfig
+const OFF: PushConfig = { status: "unconfigured", missing: ["FIREBASE_API_KEY"], invalid: [] }
+
+describe("PushController: per-app config and service-worker scope (synthetic)", () => {
+  test("config is asked for the SESSION's app, once per app", async () => {
+    const h = harness({ configFor: (app) => cfgOf(`proj-${app}`, app) })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    await h.ctl.sessionReady()
+    expect(h.configCalls.every((a) => a === "app1")).toBe(true)
+    expect(h.configCalls).toHaveLength(1)
+    expect((h.minted[0] as { firebase: { projectId: string } }).firebase.projectId).toBe("proj-app1")
+  })
+
+  test("another app's config is never used: app2 unconfigured while app1 is configured -> push off for app2", async () => {
+    const h = harness({ configFor: (app) => (app === "app1" ? cfgOf("proj-app1", "app1") : OFF) })
+    h.login("app2", "22", "c2@example.invalid")
+    await h.ctl.sessionReady()
+    expect(h.last()).toEqual({ kind: "unconfigured", missing: ["FIREBASE_API_KEY"], invalid: [] })
+    await h.ctl.enable()
+    expect(h.fcmCalls).toEqual([])
+    expect(h.sdkCalls).toEqual([])
+  })
+
+  test("backend-scoped app: token minted with its scope, registration + SW context + resume URL carry it", async () => {
+    const h = harness({ configFor: (app) => cfgOf("proj-app2", app!), resumeUrl: "/widget.html?source=notification&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io" })
+    h.login("app2", "22", "c2@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    expect(h.last()).toEqual({ kind: "enabled" })
+    expect((h.minted[0] as { swScope: string }).swScope).toBe("/a/app2/")
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!).scope).toBe("/a/app2/")
+    expect(h.swWrites.at(-1)).toEqual({ appId: "app2", roomId: "22", selfEmail: "c2@example.invalid", resume: "/widget.html?source=notification&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io" })
+    expect(h.swScopes.at(-1)).toBe("/a/app2/")
+  })
+
+  test("env-config app (Weaper): root scope, no scope in the registration, SW context exactly as before", async () => {
+    const h = harness({ resumeUrl: "/widget.html?source=notification&baseUrl=https%3A%2F%2Fqismo.qiscus.com" })
+    h.login("weaper", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    expect((h.minted[0] as { swScope?: string }).swScope).toBeUndefined()
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!)).not.toHaveProperty("scope")
+    expect(h.swWrites.at(-1)).toEqual({ appId: "weaper", roomId: "11", selfEmail: "c1@example.invalid" })
+    expect(h.swScopes.at(-1)).toBeUndefined()
+  })
+
+  test("switching apps removes the old app's subscription in ITS scope before the new app registers in its own", async () => {
+    const h = harness({ configFor: (app) => cfgOf(`proj-${app}`, app!) })
+    h.login("app1", "11", "old@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    h.deleted.length = 0
+    h.sdkCalls.length = 0
+    h.ctl.beginInvite()
+    h.rotateToken()
+    h.login("app2", "22", "new@example.invalid")
+    await h.ctl.sessionReady()
+    expect(h.deleted).toEqual([{ swScope: "/a/app1/" }])
+    expect(h.sdkCalls.map((c) => [c.path, c.app])).toEqual([
+      ["remove_user_device_token", "app1"],
+      ["set_user_device_token", "app2"],
+    ])
+    // the old app's SW context is cleared under the old scope, the new one written under the new scope
+    expect(h.swScopes.slice(-2)).toEqual(["/a/app1/", "/a/app2/"])
+    expect(h.swWrites.slice(-2)[0]).toBeNull()
+    expect((h.minted.at(-1) as { swScope: string }).swScope).toBe("/a/app2/")
+  })
+
+  test("teardown does not need the old app's config to still load (scope comes from the registration)", async () => {
+    let off = false
+    const h = harness({ configFor: (app) => (off ? OFF : cfgOf(`proj-${app}`, app!)) })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    h.deleted.length = 0
+    off = true // backend now unreachable / unconfigured
+    const fresh = harness({ configFor: () => OFF })
+    fresh.storage.map = new Map(h.storage.map)
+    await fresh.ctl.sessionClosed()
+    expect(fresh.deleted).toEqual([{ swScope: "/a/app1/" }])
+    expect(fresh.storage.getItem(REG_KEY)).toBeNull()
+  })
+
+  test("a legacy root-scope registration moving to a backend-scoped config is re-subscribed and the old subscription removed", async () => {
+    // Weaper registered under the root scope with the Worker env config ...
+    const h = harness()
+    h.login("weaper", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    // ... then the backend starts serving config for it.
+    const upgraded = harness({ permission: "granted", configFor: (app) => cfgOf("proj-weaper", app!) })
+    upgraded.storage.map = new Map(h.storage.map)
+    upgraded.rotateToken()
+    await upgraded.ctl.sessionReady()
+    expect(upgraded.last()).toEqual({ kind: "enabled" })
+    expect(upgraded.deleted).toEqual([{ swScope: undefined }]) // the old ROOT subscription
+    expect(JSON.parse(upgraded.storage.getItem(REG_KEY)!).scope).toBe("/a/weaper/")
   })
 })

@@ -1,0 +1,14 @@
+.git
+.alchemy
+.hermes
+.env*
+node_modules
+packages/*/node_modules
+e2e
+**/*.test.ts
+*.md
+!README.md
+Dockerfile
+.dockerignore
+# source maps are for local debugging; the container is a production build
+**/*.map
