@@ -11,7 +11,7 @@ import {
 // arrived with no quote at all — on the Live Chat widget and in the agent's
 // room alike. Both renderers can already draw a reply that carries a file; they
 // were simply never sent one.
-export const uploadFile = (e, caption, core, toasted, extras, repliedComment = null) => {
+export const uploadFile = (e, caption, core, toasted, extras, repliedComment = null, failedText = 'File uploading failed') => {
   let files = e instanceof Event ? e.target.files || e.dataTransfer.files : [e];
   const formData = new FormData();
   const roomId = core.selected.id;
@@ -23,7 +23,7 @@ export const uploadFile = (e, caption, core, toasted, extras, repliedComment = n
   let ext = files[0].name.split('.');
   ext = ext[ext.length - 1] || null;
   if (core.allowedFileTypes && core.allowedFileTypes.indexOf(ext) < 0) {
-    return toasted.error('File uploading failed');
+    return toasted.error(failedText);
   }
 
   // force lowercase extension
@@ -86,12 +86,12 @@ export const uploadFile = (e, caption, core, toasted, extras, repliedComment = n
           window.setTimeout(() => scrollIntoLastElement(core), 0);
         });
     } else {
-      toasted.error('File uploading failed');
+      toasted.error(failedText);
       core.removeUploadedFile(files[0].name, roomId);
     }
   };
   xhr.onerror = function() {
-    toasted.error('File uploading failed');
+    toasted.error(failedText);
     core.removeUploadedFile(files[0].name, roomId);
   }
   xhr.send(formData);

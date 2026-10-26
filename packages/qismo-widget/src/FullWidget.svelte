@@ -44,6 +44,7 @@
     parseUrlParams,
     convertHex,
   } from "./helper.js";
+  import { createEndChatBridge } from "./endChatBridge.mjs";
 
   /**
    * App code (mis. "zalda-vvq7pksvblaiy7s"). WAJIB untuk jalur query/props;
@@ -96,6 +97,10 @@
 
   let el = null;
   let didExchange = false; // guard: satu token hanya boleh ditukar sekali per mount
+  // Invite token asli, hanya di memori halaman ini (fragment sudah dibuang dari
+  // URL; iframe TIDAK PERNAH menerimanya). Dipakai sekali lagi untuk
+  // POST /live_handover/close saat customer menekan "End chat".
+  let inviteToken = null;
 
   // Query string halaman host (bukan query di src <script>).
   const qs = () =>
@@ -240,6 +245,27 @@
     }).catch(() => {}); // sudah dinotify lewat failFn; cegah unhandled rejection saja
   };
 
+  // Customer "End chat" (spec §3 langkah 10, §6 POST /close). Room iframe hanya
+  // MEMINTA lewat postMessage; yang memegang token (halaman ini) yang menutup.
+  // 2xx (termasuk closed:false = sesi sudah tidak berjalan) = link sudah mati;
+  // selain itu gagal dan token tetap disimpan supaya bisa dicoba lagi.
+  const closeSession = (t, signal) =>
+    fetch(`${cfg().qismoBaseUrl}/api/v2/live_handover/close`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ token: t, reason: "customer_done" }),
+      ...(signal && { signal }),
+    }).then((res) => res.ok);
+
+  const endChatBridge = createEndChatBridge({
+    getFrame: () => el,
+    getToken: () => inviteToken,
+    clearToken: () => {
+      inviteToken = null;
+    },
+    close: closeSession,
+  });
+
   // --- Jalur QUERY/PROPS (existing) ---
 
   const open = () => {
@@ -280,7 +306,10 @@
     });
   };
 
-  const onMessage = (e) => e.data && e.data.event_name && onEvent && onEvent(e.data);
+  const onMessage = (e) => {
+    if (endChatBridge(e)) return; // permintaan End chat dari room: tidak diteruskan ke onEvent
+    return e.data && e.data.event_name && onEvent && onEvent(e.data);
+  };
 
   // Safety net untuk iOS: Safari biasanya menggeser halaman ini supaya composer di
   // dalam iframe room tidak tertutup keyboard, tapi kadang di fokus pertama tidak,
@@ -325,6 +354,7 @@
       if (typeof history !== "undefined" && typeof location !== "undefined") {
         history.replaceState(null, "", location.pathname + location.search);
       }
+      inviteToken = t;
       exchangeToken(t);
       return; // jalur token TIDAK PERNAH jatuh ke jalur query/props di bawah
     }
@@ -346,6 +376,7 @@
     window.removeEventListener("message", onMessage);
     if (window.visualViewport) window.visualViewport.removeEventListener("resize", onViewportResize);
     clearTimeout(revealTimer);
+    inviteToken = null;
     if (el) el.remove();
   });
 </script>

@@ -10,9 +10,9 @@
       ul(v-if="core.selected")
         li(class="qcw-load-more qcw-load-more-btn" :style="{background: this.core.UI.colors.bubleRightColor}" @click="loadMore" v-if="comments.length > 0 && comments[0].before_id > 0")
           icon(name="ic-load" class="ic-load-more__state" v-if="isLoadingMore")
-          span Load More
+          span {{ $customerText('common.loadMore') }}
         li(class="qcw-load-more qcw-top-page" v-else)
-          span You've reached first page
+          span {{ $customerText('common.firstPage') }}
         li(v-for="(comment, index) in comments" :key="comment.id")
           comment(
             :comment="comment"
@@ -83,9 +83,9 @@ export default {
     },
     bubbleTypingText() {
       if (this.core.UI.bubbleData) {
-        return this.core.UI.bubbleData.text || 'Thinking ...';
+        return this.core.UI.bubbleData.text || this.$customerText('ai.thinking');
       }
-      return 'Thinking ...';
+      return this.$customerText('ai.thinking');
     },
     comments() {
       const { comments, participants, options } = this.core.selected;
@@ -199,9 +199,7 @@ export default {
       if (self.timesLoadingMore >= self.maxTimesLoadingMore) {
         self.isLoadingMore = false;
         self.timesLoadingMore = 1;
-        self.$toasted.error(
-          'Comment not loaded yet, load more to go to comment',
-        );
+        self.$toasted.error(self.$customerText('message.notLoaded'));
         return;
       }
       self.isLoadingMore = true;

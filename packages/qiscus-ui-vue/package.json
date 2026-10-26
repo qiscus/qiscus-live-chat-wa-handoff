@@ -1,6 +1,6 @@
 {
   "name": "qiscus-ui-vue",
-  "version": "3.2.12",
+  "version": "3.2.13",
   "description": "A UI implementation of qiscus sdk core using Vue.js",
   "author": "Qiscus <contact.us@qiscus.com>",
   "private": true,
@@ -11,6 +11,7 @@
     "build:prod": "npm run build && node build/post-build.js",
     "build-latest": "node build/build-latest.js",
     "lint": "eslint --ext .js,.vue src",
+    "test": "node --test test/*.test.js test/*.test.cjs",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {

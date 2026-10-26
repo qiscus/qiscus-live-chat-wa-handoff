@@ -10,11 +10,12 @@ div.qcw-header(:style="headerStyle")
       div.qcw-user-display-name(:style="displayNameStyle" v-html="displayName" :title="displayName")
       div.qcw-user-status.qcw-user-status--group(v-if="(isGroup || isWaGroup) && !showTypingStatus" :style="userStatusStyle") {{ participants }}
       div.qcw-user-status.status--istyping(v-if="showTypingStatus" :style="typingStatusStyle") {{ typingStatus }}
-      div.qcw-user-status.participant-count(v-if="isChannel") {{ participantsCount }} participants
+      div.qcw-user-status.participant-count(v-if="isChannel") {{ $customerText('participants.count', { count: participantsCount }) }}
       div.qcw-user-status(
         v-if="!showTypingStatus && !isGroup"
         :class="{'status--online': isOnline, 'status--lastseen': !isOnline}"
         :style="onlineStatusStyle") {{ userStatus }}
+  button.qcw-end-chat-btn(v-if="customerEndChat" type="button" :disabled="endChatPending" @click.prevent="core.UI.requestCustomerEndChat()") {{ endChatLabel }}
   i.qcw-window-toggle-btn(@click.prevent="$emit('toggle-window')")
     icon(name="ic-minimize" :fill="headerIconColor")
   //- div(v-if="isChannelEnable" :style="closeBtnStyle" @click.prevent="$emit('toggle-window')")
@@ -38,6 +39,23 @@ export default {
     window.$comp = this;
   },
   computed: {
+    // Opt-in: the control exists only when the host passes
+    // options.customerEndChat (the WA -> Live Chat handover room). It goes
+    // away once the chat has ended.
+    customerEndChat() {
+      const options = this.core && this.core.options;
+      return !!(options && options.customerEndChat) &&
+        this.core.UI.customerEndChatState !== 'ended';
+    },
+    endChatPending() {
+      return this.core.UI.customerEndChatState === 'pending';
+    },
+    endChatLabel() {
+      const state = this.core.UI.customerEndChatState;
+      if (state === 'pending') return this.$customerText('chat.ending');
+      if (state === 'error') return this.$customerText('chat.retry');
+      return this.$customerText('chat.end');
+    },
     isChannel() {
       return this.core.selected.isChannel;
     },
@@ -99,12 +117,14 @@ export default {
         .slice(0, limit)
         .map(item => item.username.split(' ')[0]);
       if (this.core.selected.participants.length <= limit)        { return participants.join(', '); }
-      return participants.concat(`and ${overflowCount} others.`).join(', ');
+      return participants.concat(this.$customerText('participants.others', { count: overflowCount })).join(', ');
     },
     typingStatus() {
       return this.core.isTypingStatus;
     },
     userStatus() {
+      if (this.core.chatmateStatus === 'Online') return this.$customerText('status.online');
+      if (this.core.chatmateStatus === 'Offline') return this.$customerText('status.offline');
       return this.core.chatmateStatus;
     },
     isOnline() {

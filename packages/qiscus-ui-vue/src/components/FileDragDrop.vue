@@ -6,7 +6,7 @@
       @dragleave="onDragging(false)"
     )
     .qcw-dropzone-text
-      span.qcw-dropzone-title {{ title || 'Drag file here for upload...' }}
+      span.qcw-dropzone-title {{ title || $customerText('upload.dropzone') }}
     |
     input(ref="inputDragDrop" type="file", @change="changeFile")
 </template>

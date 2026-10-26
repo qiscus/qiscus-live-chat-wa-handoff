@@ -109,6 +109,25 @@ export default {
       hideSystemEventAgentName:
         typeof window !== 'undefined' && window.hideSystemEventAgentName === true,
       displayMode: 'widget',
+      // Customer "End chat" (opt-in: host passes options.customerEndChat and
+      // options.customerEndChatCallback, as the WA -> Live Chat handover room
+      // does). idle -> pending -> ended | error (error is retryable). The
+      // callback only REQUESTS the close; the host reports the outcome back
+      // through setCustomerEndChatState.
+      customerEndChatState: 'idle',
+      requestCustomerEndChat() {
+        const options = self.core.options;
+        if (!(options && options.customerEndChat)) return;
+        if (typeof options.customerEndChatCallback !== 'function') return;
+        const state = self.core.UI.customerEndChatState;
+        if (state === 'pending' || state === 'ended') return;
+        self.core.UI.customerEndChatState = 'pending';
+        options.customerEndChatCallback();
+      },
+      setCustomerEndChatState(state) {
+        if (['idle', 'pending', 'ended', 'error'].indexOf(state) === -1) return;
+        self.core.UI.customerEndChatState = state;
+      },
       chatTarget(target) {
         return self.core.chatTarget(target).then(
           (res) => {
@@ -122,7 +141,7 @@ export default {
             return Promise.resolve(res);
           },
           (err) => {
-            self.$toasted.error(`Error opening chatroom: ${err}`);
+            self.$toasted.error(`${self.$customerText('chat.openError')}: ${err}`);
             return Promise.reject(err);
           },
         );
