@@ -85,6 +85,20 @@ describe("parseInviteLink (synthetic tokens)", () => {
   })
 })
 
+describe("invite links under a path prefix (synthetic)", () => {
+  const TOKEN = "synthetic-invite-token-0123456789" // the parser requires 16+ chars
+  const PREFIX_PATH = "/api/v2/live_handover/w/widget.html"
+  test("this page's own link at the prefix is read, the root path is not", () => {
+    expect(parseInviteLink(`${ORIGIN}${PREFIX_PATH}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toBe(TOKEN)
+    expect(parseInviteLink(`${ORIGIN}/widget.html#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toBeNull()
+  })
+  test("baseUrl is carried from the prefixed link only", () => {
+    const q = "?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io"
+    expect(parseInviteEnv(`${ORIGIN}${PREFIX_PATH}${q}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io" })
+    expect(parseInviteEnv(`${ORIGIN}/widget.html${q}#t=${TOKEN}`, ORIGIN, PREFIX_PATH)).toEqual({})
+  })
+})
+
 describe("parseInviteEnv (environment carried by a pasted widget link)", () => {
   const T = "eyJhbG...-abc"
   test("keeps baseUrl from this page's link as an origin and ignores iframeUrl", () => {

@@ -136,5 +136,6 @@ describe("appScope", () => {
   test("one scope per app code, under /a/", () => {
     expect(appScope("app2")).toBe("/a/app2/")
     expect(appScope("a_b-C9")).toBe("/a/a_b-C9/")
+    expect(appScope("app2", "/api/v2/live_handover/w/")).toBe("/api/v2/live_handover/w/a/app2/")
   })
 })

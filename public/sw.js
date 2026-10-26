@@ -32,15 +32,10 @@ const BODY_EN = "You have a new reply. Tap to open Live Chat."
 const BODY_ID = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
 const PREVIEW_MAX = 120
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)(\?|#|$)/i
-const ICON = "/img/pwa/icon-192.png"
-const BADGE = "/img/pwa/badge-96.png"
-const RESUME_PATH = "/widget.html"
-const RESUME_URL = "/widget.html?source=notification"
 const HOUSEKEEPING_TAG = "handoff-housekeeping"
 
 const SHELL_CACHE = "handoff-shell-v2"
 const SHELL_PREFIX = "handoff-shell-"
-const SHELL = ["/offline.html", "/manifest.webmanifest", "/img/pwa/icon-192.png", "/img/pwa/icon-512.png"]
 
 // MUST match src/client/swContext.ts.
 const CTX_DB = "qiscus-handoff-push"
@@ -52,10 +47,20 @@ const CTX_KEY = "current"
 // /a/<app>/sw.js with scope /a/<app>/ (its own push subscription / VAPID key).
 // A per-app worker only ever reads ITS app's context.
 const SCOPE_PATH = new URL(self.registration.scope).pathname
-const SCOPE_APP = (/^\/a\/([A-Za-z0-9_-]{1,64})\/$/.exec(SCOPE_PATH) || [])[1] || null
+const SCOPE_PARTS = /^(.*\/)a\/([A-Za-z0-9_-]{1,64})\/$/.exec(SCOPE_PATH)
+const SCOPE_APP = SCOPE_PARTS ? SCOPE_PARTS[2] : null
 const MY_CTX_KEY = SCOPE_APP ? SCOPE_PATH : CTX_KEY
+// The path prefix the app is served under ("/" on its own domain, or a sub-path
+// when another server proxies it): the root worker's scope is the prefix itself,
+// a per-app worker's scope is <prefix>a/<app>/.
+const BASE = SCOPE_PARTS ? SCOPE_PARTS[1] : SCOPE_PATH
+const ICON = BASE + "img/pwa/icon-192.png"
+const BADGE = BASE + "img/pwa/badge-96.png"
+const RESUME_PATH = BASE + "widget.html"
+const RESUME_URL = BASE + "widget.html?source=notification"
+const SHELL = [BASE + "offline.html", BASE + "manifest.webmanifest", BASE + "img/pwa/icon-192.png", BASE + "img/pwa/icon-512.png"]
 // The only shape a notification click may reopen (written by our own page).
-const RESUME_OK = /^\/widget\.html\?[A-Za-z0-9_%.~=&:-]*$/
+const RESUME_OK = new RegExp("^" + RESUME_PATH.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&") + "\\?[A-Za-z0-9_%.~=&:-]*$")
 
 // ------------------------------------------------------------------ context
 
@@ -244,7 +249,7 @@ function routeFetch(event) {
 
   if (req.mode === "navigate" && url.pathname === RESUME_PATH) {
     event.respondWith(
-      fetch(req).catch(async () => (await caches.match("/offline.html")) || new Response("Offline", { status: 503 })),
+      fetch(req).catch(async () => (await caches.match(BASE + "offline.html")) || new Response("Offline", { status: 503 })),
     )
     return
   }

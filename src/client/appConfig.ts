@@ -45,9 +45,9 @@ export function parseBaseUrl(raw: string): string | null {
   return null
 }
 
-/** The service-worker scope that holds one app's push subscription. */
-export function appScope(appCode: string): string {
-  return `/a/${appCode}/`
+/** The service-worker scope that holds one app's push subscription (`base` = the app's path prefix, see base.ts). */
+export function appScope(appCode: string, base = "/"): string {
+  return `${base}a/${appCode}/`
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "")
@@ -97,7 +97,7 @@ export async function fetchAppPushConfig(
   }
 }
 
-export function resolveAppConfig(env: PushConfig, backend: AppPushConfig | null, appCode: string): PushConfig {
+export function resolveAppConfig(env: PushConfig, backend: AppPushConfig | null, appCode: string, base = "/"): PushConfig {
   if (!backend) return env
   return {
     status: "configured",
@@ -105,6 +105,6 @@ export function resolveAppConfig(env: PushConfig, backend: AppPushConfig | null,
     vapidKey: backend.vapidKey,
     appCodes: [appCode],
     source: "backend",
-    swScope: appScope(appCode),
+    swScope: appScope(appCode, base),
   }
 }

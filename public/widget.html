@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <title>Live Chat</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#27b199" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/img/pwa/icon-192.png" />
-    <link rel="apple-touch-icon" href="/img/pwa/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="img/pwa/icon-192.png" />
+    <link rel="apple-touch-icon" href="img/pwa/apple-touch-icon-180.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Live Chat" />
-    <script src="/js/push/handoff-push.js"></script>
+    <script src="js/push/handoff-push.js"></script>
     <style>
       html,
       body {
@@ -60,9 +60,11 @@
        * could run foreign JS or send the invite token elsewhere.
        */
       var DEFAULTS = {
-        scriptUrl: new URL("/js/qismo-full-v5.js", location.href).href,
+        scriptUrl: new URL("js/qismo-full-v5.js", location.href).href,
         baseUrl: "https://qismo.qiscus.com",
-        iframeUrl: location.origin,
+        // The room is served next to this page, under the same path prefix (no trailing slash:
+        // QismoFull appends "/iframes/v5/...").
+        iframeUrl: new URL(".", location.href).href.replace(/\/$/, ""),
       };
       var statusEl = document.getElementById("handover-status");
       // Self-contained EN/ID copy so these messages stay localized even when

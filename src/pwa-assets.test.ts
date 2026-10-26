@@ -11,10 +11,12 @@ function pngSize(bytes: Uint8Array): [number, number] {
 }
 
 describe("manifest.webmanifest", () => {
+  // Relative on purpose: resolved against the manifest's own URL, so the same file
+  // works at a domain root and under a sub-path (see src/client/base.ts).
   test("stable id, same-origin start_url and scope", () => {
-    expect(manifest.id).toBe("/widget.html")
-    expect(manifest.start_url).toBe("/widget.html?source=pwa")
-    expect(manifest.scope).toBe("/")
+    expect(manifest.id).toBe("widget.html")
+    expect(manifest.start_url).toBe("widget.html?source=pwa")
+    expect(manifest.scope).toBe("./")
     expect(manifest.display).toBe("standalone")
   })
 
@@ -28,7 +30,7 @@ describe("manifest.webmanifest", () => {
 
   test("every icon exists with the declared size; a maskable icon is present", async () => {
     for (const icon of manifest.icons) {
-      const bytes = new Uint8Array(await Bun.file(pub(icon.src.slice(1))).arrayBuffer())
+      const bytes = new Uint8Array(await Bun.file(pub(icon.src)).arrayBuffer())
       const [w, h] = pngSize(bytes)
       expect(`${w}x${h}`).toBe(icon.sizes)
     }
@@ -78,16 +80,17 @@ describe("customer End chat bundle", () => {
 describe("multilingual static assets", () => {
   test("the handover room page uses an SDK build that contains the customer locale logic", async () => {
     const html = await Bun.file(pub("live-handover-room.html")).text()
-    const css = /href="(\/css\/qiscus-handoff\.css)"/.exec(html)?.[1]
-    const js = /src="(\/js\/qiscus-handoff\.js)"/.exec(html)?.[1]
+    // The room is served at <prefix>/iframes/v5/<app>/live-handover-room, so 3 levels up is the prefix.
+    const css = /href="\.\.\/\.\.\/\.\.\/(css\/qiscus-handoff\.css)"/.exec(html)?.[1]
+    const js = /src="\.\.\/\.\.\/\.\.\/(js\/qiscus-handoff\.js)"/.exec(html)?.[1]
     expect(css).toBeDefined()
     expect(js).toBeDefined()
     expect(html).toContain("customerLocale: 'auto'")
-    const sdk = await Bun.file(pub(js!.slice(1))).text()
+    const sdk = await Bun.file(pub(js!)).text()
     expect(sdk).toContain("customerLocale")
     expect(sdk).toContain("Akhiri chat")
     expect(sdk).toContain("Seret file ke sini untuk mengunggah")
-    expect(await Bun.file(pub(css!.slice(1))).exists()).toBe(true)
+    expect(await Bun.file(pub(css!)).exists()).toBe(true)
   })
 
   test("the manifest carries no Indonesian-only copy now that English is the fallback", () => {
@@ -107,5 +110,29 @@ describe("multilingual static assets", () => {
     }
     const bundle = await Bun.file(pub("js/push/handoff-push.js")).text()
     expect(bundle).toContain("navigator.languages")
+  })
+})
+
+describe("served under a path prefix", () => {
+  // The app can be reverse-proxied under a sub-path (e.g. qismo-api's /api/v2/live_handover/w/).
+  // A root-absolute URL ("/js/x.js") would then point outside the prefix, so the static pages
+  // must only use relative ones, and scripts must derive their own prefix.
+  const rootAbsolute = /(?:href|src|action)=["']\/(?!\/)/
+
+  for (const file of ["widget.html", "live-handover-room.html", "offline.html"]) {
+    test(`${file} has no root-absolute href/src`, async () => {
+      expect(rootAbsolute.test(await Bun.file(pub(file)).text())).toBe(false)
+    })
+  }
+
+  test("the manifest has no root-absolute URL", () => {
+    for (const url of [manifest.id, manifest.start_url, manifest.scope, ...manifest.icons.map((i: { src: string }) => i.src)])
+      expect(url.startsWith("/")).toBe(false)
+  })
+
+  test("the service worker derives its prefix from its own scope, not from literals", async () => {
+    const sw = await Bun.file(pub("sw.js")).text()
+    for (const literal of ['"/widget.html', '"/offline.html', '"/img/', '"/manifest.webmanifest', "/^\\/widget"])
+      expect(sw).not.toContain(literal)
   })
 })

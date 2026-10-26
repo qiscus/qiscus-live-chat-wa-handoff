@@ -374,3 +374,41 @@ describe("sw.js per-app scope (synthetic)", () => {
     expect(visible()[0]!.options.data).toEqual({ v: 1 })
   })
 })
+
+describe("sw.js served under a path prefix (synthetic)", () => {
+  // qismo-api reverse-proxies the app under a sub-path; the worker's prefix is its own scope.
+  const PREFIX = "/api/v2/live_handover/w/"
+  const APP_SCOPE = `${PREFIX}a/app2/`
+  const RESUME = `${PREFIX}widget.html?source=notification&baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io`
+  const CTX_P = { appId: "app2", roomId: "700", selfEmail: "customer2@example.invalid", resume: RESUME }
+  const write = (ctx: Record<string, unknown> | null, scope?: string) => writeSwContext(sw.indexedDB as unknown as IDBFactory, ctx as never, scope)
+
+  test("the root worker's icons, resume link and shell all live under the prefix", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN, PREFIX)
+    await write(CTX)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()[0]!.options.icon).toBe(`${PREFIX}img/pwa/icon-192.png`)
+    expect(visible()[0]!.options.badge).toBe(`${PREFIX}img/pwa/badge-96.png`)
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: { v: 1 } } })
+    expect(sw.opened).toEqual([`${PREFIX}widget.html?source=notification`])
+  })
+
+  test("a per-app worker under the prefix keys its context by its own scope and reopens the stored link", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN, APP_SCOPE)
+    await write(CTX_P, APP_SCOPE)
+    await push(fcmEnvelope(agentReply({ id: 9100, room_id: 700 })))
+    expect(visible()).toHaveLength(1)
+    expect(visible()[0]!.options.data).toEqual({ v: 1, resume: RESUME })
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: visible()[0]!.options.data } })
+    expect(sw.opened).toEqual([RESUME])
+  })
+
+  test("a resume link outside the prefix (or the root one) is refused", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN, APP_SCOPE)
+    for (const bad of ["/widget.html?source=notification", "/other/widget.html?x=1", `${PREFIX}widget.htmlx?x=1`, `//evil.example${PREFIX}widget.html?x=1`]) {
+      await write({ ...CTX_P, resume: bad }, APP_SCOPE)
+      await push(fcmEnvelope(agentReply({ id: 9200, room_id: 700 })))
+      expect(visible().at(-1)!.options.data).toEqual({ v: 1 })
+    }
+  })
+})

@@ -18,6 +18,7 @@
  * read from same-origin storage the room wrote.
  */
 import type { PushConfig } from "../push/config"
+import { basePathOf } from "./base"
 import { QISCUS_HOST, fetchAppPushConfig, parseBaseUrl, resolveAppConfig } from "./appConfig"
 import { type ConfiguredPushConfig, PushController, type PushDeps, type PushUiState } from "./controller"
 import { parseInviteEnv, parseInviteLink, type InviteEnv } from "./inviteLink"
@@ -26,8 +27,10 @@ import { detectSupport, probeBrowser } from "./support"
 import { writeSwContext } from "./swContext"
 import { MESSAGES, localizedText, resolveCustomerLocale, type CustomerLocale } from "./i18n"
 
-const SW_URL = "/sw.js"
-const FIREBASE_MODULE = "/js/push/firebase.js"
+// Path prefix this page is served under ("/" at a domain root; see base.ts).
+const BASE = typeof location === "undefined" ? "/" : basePathOf(location.href)
+const SW_URL = `${BASE}sw.js`
+const FIREBASE_MODULE = `${BASE}js/push/firebase.js`
 const DISMISS_KEY = "qiscus-handoff:push-dismissed:v1"
 const IFRAME_ID = "qcw-iframe"
 
@@ -69,13 +72,13 @@ function whenActive(reg: ServiceWorkerRegistration): Promise<ServiceWorkerRegist
   })
 }
 
-function registerSw(scope = "/"): Promise<ServiceWorkerRegistration> {
+function registerSw(scope = BASE): Promise<ServiceWorkerRegistration> {
   let registration = swRegistrations.get(scope)
   if (!registration) {
     // updateViaCache "none": the update check never goes through the HTTP
     // cache, so a deployed sw.js is seen on the very next check.
     registration = navigator.serviceWorker
-      .register(scope === "/" ? SW_URL : `${scope}sw.js`, { scope, updateViaCache: "none" })
+      .register(scope === BASE ? SW_URL : `${scope}sw.js`, { scope, updateViaCache: "none" })
       .then((reg) => {
         debug("sw registered", { scope: reg.scope, active: !!reg.active, waiting: !!reg.waiting })
         swLastUpdate = Date.now()
@@ -84,7 +87,7 @@ function registerSw(scope = "/"): Promise<ServiceWorkerRegistration> {
           debug("sw update found", scope)
           next?.addEventListener("statechange", () => debug("sw update state", next.state))
         })
-        return scope === "/" ? navigator.serviceWorker.ready : whenActive(reg)
+        return scope === BASE ? navigator.serviceWorker.ready : whenActive(reg)
       })
     swRegistrations.set(scope, registration)
     registration.catch((e) => {
@@ -125,7 +128,7 @@ function testSeamGetToken(): ((cfg: ConfiguredPushConfig, reg: ServiceWorkerRegi
 const fcm: Fcm = {
   async getToken(cfg) {
     // The worker of THIS app's scope: backend-configured apps have their own.
-    const reg = await registerSw(cfg.swScope ?? "/")
+    const reg = await registerSw(cfg.swScope ?? BASE)
     const seam = testSeamGetToken()
     if (seam) return seam(cfg, reg)
     const path: string = FIREBASE_MODULE // non-literal: loaded at runtime, not bundled here
@@ -153,7 +156,7 @@ const fcm: Fcm = {
 
 /** The Worker's own (global env) push config, same origin. */
 async function loadEnvConfig(): Promise<PushConfig> {
-  const res = await fetch("/push/config", { cache: "no-store", credentials: "same-origin" })
+  const res = await fetch(`${BASE}push/config`, { cache: "no-store", credentials: "same-origin" })
   const body = (await res.json()) as PushConfig
   if (body && (body.status === "configured" || body.status === "unconfigured")) return body
   return { status: "unconfigured", missing: [], invalid: [] }
@@ -451,8 +454,8 @@ function createUi(actions: { enable(): void; disable(): void }) {
     const go = button(
       TEXT.pasteGo,
       () => {
-        const token = parseInviteLink(input.value, location.origin)
-        const env = parseInviteEnv(input.value, location.origin)
+        const token = parseInviteLink(input.value, location.origin, `${BASE}widget.html`)
+        const env = parseInviteEnv(input.value, location.origin, `${BASE}widget.html`)
         input.value = ""
         if (!token) {
           err.textContent = TEXT.pasteBad
@@ -524,7 +527,7 @@ export function start(opts: { baseUrl?: string }): HandoffPushApi {
     if (!cfg) {
       cfg = Promise.all([envConfig(), fetchAppPushConfig(window.fetch.bind(window), base, appId)]).then(([env, backend]) => {
         debug("push config", { appId, source: backend ? "backend (wins over env)" : "worker env" })
-        return resolveAppConfig(env, backend, appId)
+        return resolveAppConfig(env, backend, appId, BASE)
       })
       appConfigs.set(appId, cfg)
     }
@@ -544,7 +547,7 @@ export function start(opts: { baseUrl?: string }): HandoffPushApi {
     // A notification click reopens THIS page's backend (the page itself, validated), not the defaults.
     resumeUrl: () => {
       if (!base) return undefined
-      return `/widget.html?${new URLSearchParams({ source: "notification", baseUrl: base })}`
+      return `${BASE}widget.html?${new URLSearchParams({ source: "notification", baseUrl: base })}`
     },
     fcm,
     swContext: { write: (ctx, scope) => writeSwContext(indexedDB, ctx ? { ...ctx, locale: LOCALE } : null, scope) },
@@ -601,7 +604,7 @@ export function start(opts: { baseUrl?: string }): HandoffPushApi {
       frame.setAttribute("allow", "clipboard-write")
       const app = encodeURIComponent(session.appId)
       // No token or user data in this URL: the room reads the stored session.
-      frame.src = `/iframes/v5/${app}/live-handover-room?resume=1&app_id=${app}`
+      frame.src = `${BASE}iframes/v5/${app}/live-handover-room?resume=1&app_id=${app}`
       document.body.appendChild(frame)
     },
     offerPasteLink() {
@@ -614,7 +617,7 @@ export function start(opts: { baseUrl?: string }): HandoffPushApi {
         const search = query.toString() ? `?${query.toString()}` : ""
         // Same transport as the normal invite: the fragment, which QismoFull
         // strips before the exchange and which never reaches a server.
-        history.replaceState(null, "", `/widget.html${search}#t=${encodeURIComponent(token)}`)
+        history.replaceState(null, "", `${BASE}widget.html${search}#t=${encodeURIComponent(token)}`)
         location.reload()
       })
       return true

@@ -40,8 +40,10 @@ app.get("/push/config", (c) => {
 // Per-app service-worker script. A push subscription is bound to one service
 // worker registration and one VAPID key, so each app whose Firebase config
 // comes from qismo-api registers the same sw.js from its own path, giving it
-// its own scope (/a/<app>/) and subscription. The path alone limits the scope;
-// Service-Worker-Allowed is stated explicitly. Never cached, like /sw.js.
+// its own scope (/a/<app>/) and subscription. The path alone limits the scope
+// (a worker may control its own directory), so no Service-Worker-Allowed header
+// is sent: a fixed "/a/<app>/" there would be wrong when this app is served under
+// a sub-path by a reverse proxy. Never cached, like /sw.js.
 app.get("/a/:appCode/sw.js", async (c) => {
   const appCode = c.req.param("appCode")
   if (!APP_CODE.test(appCode)) return c.text("Not found", 404)
@@ -55,7 +57,6 @@ app.get("/a/:appCode/sw.js", async (c) => {
     headers: {
       "Content-Type": "text/javascript; charset=utf-8",
       "Cache-Control": "no-cache",
-      "Service-Worker-Allowed": `/a/${appCode}/`,
     },
   })
 })

@@ -324,7 +324,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { start_url: string }).start_url).toBe("/widget.html?source=pwa")
+    expect(((await res.json()) as { start_url: string }).start_url).toBe("widget.html?source=pwa")
     expect((await fetch(`${ORIGIN}/sw.js`)).status).toBe(200)
     const cfg = (await (await fetch(`${ORIGIN}/push/config`)).json()) as { status: string }
     expect(cfg.status).toBe("configured")
@@ -914,6 +914,68 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       }
     },
     120_000,
+  )
+
+  test(
+    "reverse-proxied under a sub-path (qismo-api style): page, room, service workers and push stay inside the prefix",
+    async () => {
+      const PREFIX = "/api/v2/live_handover/w"
+      // Stands in for qismo-api: <prefix>/<path> is forwarded to this app's <path>; anything else is not routed here.
+      const proxy = Bun.serve({
+        port: 0,
+        hostname: "localhost",
+        fetch: (req) => {
+          const u = new URL(req.url)
+          if (!u.pathname.startsWith(PREFIX + "/")) return new Response("not routed", { status: 404 })
+          return fetch(ORIGIN + u.pathname.slice(PREFIX.length) + u.search, { method: req.method, headers: req.headers })
+        },
+      })
+      const PROXY = `http://localhost:${proxy.port}`
+      backend.reset()
+      backend.answers = { synthapp: "configured" }
+      try {
+        upstream.reset()
+        const ctx = await newContext()
+        await ctx.grantPermissions(["notifications"], { origin: PROXY })
+        // the API on the proxy's own origin (what baseUrl points at), and the room SDK stub
+        await ctx.route(`${PROXY}/api/v2/live_handover/{exchange,push_config}*`, fakeQismo)
+        await ctx.route(`${PROXY}${PREFIX}/js/qiscus-handoff.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
+        const page = await ctx.newPage()
+        const outside: string[] = []
+        const failed: string[] = []
+        page.on("request", (r) => {
+          const u = new URL(r.url())
+          if (u.origin === PROXY && !u.pathname.startsWith(PREFIX + "/") && !u.pathname.startsWith("/api/v2/live_handover/")) outside.push(u.pathname)
+        })
+        page.on("response", (r) => {
+          if (new URL(r.url()).origin === PROXY && r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`)
+        })
+        await page.goto(`${PROXY}${PREFIX}/widget.html?baseUrl=${encodeURIComponent(PROXY)}#t=synthetic-invite-A`)
+        await waitPushState(page, "offer")
+
+        // the room iframe, the manifest and every asset resolved under the prefix
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).pathname).toBe(`${PREFIX}/iframes/v5/synthapp/live-handover-room`)
+        expect(await page.locator('link[rel="manifest"]').evaluate((l) => new URL((l as HTMLLinkElement).href).pathname)).toBe(`${PREFIX}/manifest.webmanifest`)
+        const manifest = (await (await fetch(`${PROXY}${PREFIX}/manifest.webmanifest`)).json()) as { start_url: string; icons: { src: string }[] }
+        expect(new URL(manifest.start_url, `${PROXY}${PREFIX}/manifest.webmanifest`).pathname).toBe(`${PREFIX}/widget.html`)
+        expect(new URL(manifest.icons[0]!.src, `${PROXY}${PREFIX}/manifest.webmanifest`).pathname).toBe(`${PREFIX}/img/pwa/icon-192.png`)
+
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        // the per-app worker is registered under the prefix, not at the domain root
+        expect(await fcmCfgs(page)).toEqual([perApp("proj-one-synth", `${PREFIX}/a/synthapp/`)])
+        expect(await page.evaluate(() => navigator.serviceWorker.getRegistrations().then((rs) => rs.map((r) => new URL(r.scope).pathname).sort()))).toContain(`${PREFIX}/a/synthapp/`)
+        expect(upstream.deviceCalls.map((c) => c.path)).toEqual(["set_user_device_token"])
+
+        expect(outside).toEqual([])
+        expect(failed).toEqual([])
+        await ctx.close()
+      } finally {
+        backend.reset()
+        proxy.stop(true)
+      }
+    },
+    60_000,
   )
 
   test(

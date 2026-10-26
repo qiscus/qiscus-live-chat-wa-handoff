@@ -66,7 +66,7 @@ describe("GET /a/:appCode/sw.js: one service-worker scope per app (synthetic)", 
     const res = await app.request("/a/app-two_9/sw.js", {}, { ASSETS: fakeAssets })
     expect(res.status).toBe(200)
     expect(await res.text()).toBe("asset:/sw.js")
-    expect(res.headers.get("service-worker-allowed")).toBe("/a/app-two_9/")
+    expect(res.headers.get("service-worker-allowed")).toBeNull() // the script directory is already the scope
     expect(res.headers.get("cache-control")).toBe("no-cache")
     expect(res.headers.get("content-type")).toContain("javascript")
   })

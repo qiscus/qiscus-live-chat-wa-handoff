@@ -84,7 +84,7 @@ describe("app routes behind the static layer", () => {
   test("per-app service worker: scoped, never cached, bad app code refused", async () => {
     const res = await get("/a/some-app_1/sw.js")
     expect(res.status).toBe(200)
-    expect(res.headers.get("service-worker-allowed")).toBe("/a/some-app_1/")
+    expect(res.headers.get("service-worker-allowed")).toBeNull()
     expect(res.headers.get("cache-control")).toBe("no-cache")
     expect((await res.text()).startsWith("// service worker")).toBe(true)
     expect((await get("/a/bad%20code/sw.js")).status).toBe(404)

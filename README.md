@@ -214,7 +214,7 @@ was fetched for; a service worker refuses a context that belongs to another app.
 **One service-worker scope per app.** A push subscription belongs to one
 service-worker registration and one VAPID key, so two Firebase projects must not
 share one. An app with backend config registers `/a/<app>/sw.js` (the same
-`sw.js`, served by the Worker under that path, `Service-Worker-Allowed` set,
+`sw.js`, served by the Worker under that path (its directory is its scope),
 never cached) with scope `/a/<app>/`; its subscription, Firebase token and SW
 context (IndexedDB key `/a/<app>/`) are separate from every other app's.
 A notification click reopens `/widget.html?source=notification&baseUrl=…`
