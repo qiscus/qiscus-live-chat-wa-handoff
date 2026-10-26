@@ -365,3 +365,31 @@ node node_modules/.bin/alchemy deploy --yes --no-input
 The existing deployment also uses `handoff.zroconf.web.id` as a sample alias.
 Before deploying your own copy, replace that domain and zone in `alchemy.run.ts`
 with a domain in a Cloudflare zone you control, or remove the `domain` property.
+
+## Run as a container (no Cloudflare)
+
+The same app runs on plain Bun: `src/server.ts` serves `public/` (like the
+Worker's asset layer: literal `.html`, no redirects, ETag + `must-revalidate`,
+gzip) and mounts the Worker's Hono routes. The only platform differences are the
+`ASSETS` binding (replaced by `src/static.ts`) and the Worker env, which becomes
+process environment variables.
+
+```bash
+docker build -t qiscus-wa-handoff .
+docker run --rm -p 8080:8080 qiscus-wa-handoff
+# Web Push is optional; pass the PUBLIC Firebase web config / VAPID key as env:
+docker run --rm -p 8080:8080 -e FIREBASE_API_KEY=... -e FIREBASE_PROJECT_ID=... \
+  -e FIREBASE_MESSAGING_SENDER_ID=... -e FIREBASE_APP_ID=... -e FIREBASE_VAPID_KEY=... \
+  qiscus-wa-handoff
+```
+
+- Env: `PORT` (default 8080), `HOST`, `PUBLIC_DIR`, plus the `FIREBASE_*` /
+  `PUSH_APP_CODES` names from "Web Push". Never put a service-account JSON here.
+- `bun run start` runs it without Docker.
+- The image does not rebuild the widget: `public/` is copied as committed. After
+  changing `packages/`, run `bun run build:vendor` / `bun run build:client`, commit,
+  then rebuild the image.
+- It speaks plain HTTP and sets no TLS/CORS/compression policy beyond the above:
+  put it behind the platform's ingress/load balancer. Keep `/widget.html` free of
+  rewrites or redirects (the invite token lives in the URL fragment).
+- Healthcheck: `GET /widget.html` (built into the image).

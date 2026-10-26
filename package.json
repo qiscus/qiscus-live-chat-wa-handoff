@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "alchemy dev",
+    "start": "bun src/server.ts",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "typecheck": "tsc --noEmit --project tsconfig.json",
