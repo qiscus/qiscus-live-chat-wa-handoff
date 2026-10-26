@@ -7,7 +7,7 @@
 # Web Push (optional): pass the PUBLIC Firebase web config / VAPID key as env,
 # e.g. -e FIREBASE_API_KEY=... (see README, "Web Push"). Never a service account.
 
-FROM oven/bun:1.4-slim AS build
+FROM oven/bun:1.4-alpine AS build
 WORKDIR /app
 COPY package.json bun.lock ./
 # Only what src/server.ts needs at runtime is bundled; devDependencies and the
@@ -17,7 +17,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN bun build src/server.ts --target=bun --outfile=dist/server.js
 
-FROM oven/bun:1.4-slim
+FROM oven/bun:1.4-alpine
 ENV NODE_ENV=production PORT=8080
 WORKDIR /app
 # public/ already holds the built bundle, room SDK and push scripts (committed);
