@@ -6,7 +6,7 @@ copied here so the handoff widget builds and deploys without MCF.
 
 | Package | Output used here | MCF path | Forked from |
 | --- | --- | --- | --- |
-| `qiscus-ui-vue` 3.2.13 | `public/js/qiscus-sdk.<v>.js(.map)`, `public/css/qiscus-sdk.<v>.css` | `qiscus-ui-vue/` | `e33d0a9a2` (master, 2026-10-22) |
+| `qiscus-ui-vue` 3.2.13 | `public/js/qiscus-handoff.js(.map)`, `public/css/qiscus-handoff.css` (webpack's `qiscus-sdk.<v>.*`, renamed at copy) | `qiscus-ui-vue/` | `e33d0a9a2` (master, 2026-10-22) |
 | `qismo-widget` | `public/js/qismo-full-v5.js(.map)` | `qismo-widget/` | `e33d0a9a2` (master, 2026-10-22) |
 
 At the fork commit, a build of either package here is byte-identical to the

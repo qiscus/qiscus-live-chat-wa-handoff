@@ -40,9 +40,9 @@ const STATIC_PATHS = [
   "/manifest.webmanifest",
   "/live-handover-room.html",
   "/css/qismo-latest-v5.css",
-  "/css/qiscus-sdk.3.2.13.css",
+  "/css/qiscus-handoff.css",
   "/js/qismo-full-v5.js",
-  "/js/qiscus-sdk.3.2.13.js",
+  "/js/qiscus-handoff.js",
 ]
 
 describe("paths compared with Cloudflare", () => {
@@ -88,7 +88,7 @@ describe("paths compared with Cloudflare", () => {
       expect(html).toBe(await roomPage(env))
       const config = html.indexOf('window.qiscusOmniForm = {"enabled":true,"allowedOrigins":["https://form.example"]}')
       expect(config).toBeGreaterThan(-1)
-      expect(config).toBeLessThan(html.indexOf("qiscus-sdk.3.2.13.js\"></script>"))
+      expect(config).toBeLessThan(html.indexOf("qiscus-handoff.js\"></script>"))
     } finally {
       withEnv.stop(true)
     }
@@ -114,16 +114,16 @@ describe("revalidation", () => {
   })
 
   test("a compressed response's weak ETag revalidates to 304", async () => {
-    const first = await get("/js/qiscus-sdk.3.2.13.js", { "Accept-Encoding": "gzip, br" })
+    const first = await get("/js/qiscus-handoff.js", { "Accept-Encoding": "gzip, br" })
     const etag = first.headers.get("etag")!
     expect(etag.startsWith('W/"')).toBe(true)
-    const res = await get("/js/qiscus-sdk.3.2.13.js", { "Accept-Encoding": "gzip, br", "If-None-Match": etag })
+    const res = await get("/js/qiscus-handoff.js", { "Accept-Encoding": "gzip, br", "If-None-Match": etag })
     expect(res.status).toBe(304)
   })
 })
 
 describe("compression", () => {
-  const path = "/js/qiscus-sdk.3.2.13.js"
+  const path = "/js/qiscus-handoff.js"
 
   test("br is preferred and decodes to the original file", async () => {
     const original = new Uint8Array(await Bun.file(join(PUBLIC_DIR, path)).arrayBuffer())
@@ -179,7 +179,7 @@ describe("compression", () => {
 
 describe("HEAD", () => {
   test("reports the size GET would send, with no body", async () => {
-    for (const [path, enc] of [["/widget.html", "identity"], ["/js/qiscus-sdk.3.2.13.js", "br"]] as const) {
+    for (const [path, enc] of [["/widget.html", "identity"], ["/js/qiscus-handoff.js", "br"]] as const) {
       const got = await get(path, { "Accept-Encoding": enc })
       const head = await get(path, { "Accept-Encoding": enc }, "HEAD")
       expect(head.status).toBe(200)
