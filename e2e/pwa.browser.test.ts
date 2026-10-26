@@ -278,7 +278,9 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { start_url: string }).start_url).toBe("/widget.html?source=pwa")
+    // Relative since the page can be served under a prefix; resolves against the manifest URL.
+    const startUrl = ((await res.json()) as { start_url: string }).start_url
+    expect(new URL(startUrl, res.url).href).toBe(`${ORIGIN}/widget.html?source=pwa`)
     expect((await fetch(`${ORIGIN}/sw.js`)).status).toBe(200)
     const cfg = (await (await fetch(`${ORIGIN}/push/config`)).json()) as { status: string }
     expect(cfg.status).toBe("configured")
