@@ -10,7 +10,8 @@
     "build:client": "bun scripts/build-client.ts",
     "icons": "bun scripts/gen-icons.ts",
     "test": "bun test",
-    "test:e2e": "bun test ./e2e"
+    "test:e2e": "bun test ./e2e",
+    "build:vendor": "bun scripts/build-vendor.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260917.1",

@@ -233,7 +233,7 @@ describe("sw.js cache scope (synthetic)", () => {
       ORIGIN + "/push/config",
       "https://api3.qiscus.com/api/v2/sdk/load_comments",
       ORIGIN + "/iframes/v5/app1/live-handover-room?resume=1",
-      ORIGIN + "/js/qiscus-sdk.3.2.6.js",
+      ORIGIN + "/js/qiscus-sdk.3.2.12.js",
     ]) {
       const ev: any = { request: req(url) }
       await sw.dispatch("fetch", ev)

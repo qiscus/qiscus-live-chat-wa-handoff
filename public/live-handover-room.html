@@ -19,7 +19,7 @@
         - title uses the default product name (no white-label config).
       Keep in sync with the Blade view when it changes.
     -->
-    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.6.css" />
+    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.12.css" />
     <style>
         html,
         body {
@@ -160,7 +160,7 @@
         })();
     </script>
     <div id="qiscus-widget"></div>
-    <script src="/js/qiscus-sdk.3.2.6.js"></script>
+    <script src="/js/qiscus-sdk.3.2.12.js"></script>
     <script src="/js/third-party/aes.js"></script>
     <script src="/js/push/handoff-room.js"></script>
     <script>
@@ -288,6 +288,9 @@
                     mode: 'wide',
                     uploadURL: qiscusBaseUrl + '/api/v2/sdk/upload',
                     options: {
+                        // WA interactive list rows become selectable buttons that send
+                        // a list_reply (qiscus-sdk 3.2.10, opt-in; ported from MCF e33d0a9a2).
+                        interactiveListReply: true,
                         loginSuccessCallback: function (userData) {
                             QiscusSDK.core.chatGroup(roomId).then(function () {
                                 // Identity verified upstream (verify_identity_token)

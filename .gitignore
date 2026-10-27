@@ -35,3 +35,8 @@ alchemy.state.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# forked packages (build output and installs)
+packages/*/node_modules
+packages/*/dist
+packages/public
