@@ -19,7 +19,7 @@
         - title uses the default product name (no white-label config).
       Keep in sync with the Blade view when it changes.
     -->
-    <link rel="stylesheet" href="/css/qiscus-sdk.3.2.12.css" />
+    <link rel="stylesheet" href="../../../css/qiscus-sdk.3.2.12.css" />
     <style>
         html,
         body {
@@ -160,9 +160,9 @@
         })();
     </script>
     <div id="qiscus-widget"></div>
-    <script src="/js/qiscus-sdk.3.2.12.js"></script>
-    <script src="/js/third-party/aes.js"></script>
-    <script src="/js/push/handoff-room.js"></script>
+    <script src="../../../js/qiscus-sdk.3.2.12.js"></script>
+    <script src="../../../js/third-party/aes.js"></script>
+    <script src="../../../js/push/handoff-room.js"></script>
     <script>
         /**
          * WA -> Live Chat handoff room. Never calls POST /api/v2/qiscus/initiate_chat:
@@ -206,7 +206,7 @@
                 div.className = 'error-app';
                 div.innerHTML =
                     '<div>' +
-                    '<img src="/img/fail_load_widget.svg" alt="fail_load_widget">' +
+                    '<img src="../../../img/fail_load_widget.svg" alt="fail_load_widget">' +
                     '<div class="fail-title"><div>Oops...</div></div>' +
                     '<div>Something went wrong. Please try again by refreshing your browser.</div>' +
                     '</div>';
@@ -275,7 +275,7 @@
             }
 
             function attachCustomCss() {
-                var qismocss = createNode('link', null, { 'rel': 'stylesheet', 'href': '/css/qismo-latest-v5.css' });
+                var qismocss = createNode('link', null, { 'rel': 'stylesheet', 'href': '../../../css/qismo-latest-v5.css' });
                 qismocss.id = 'qismo-css';
                 !document.querySelector('#qismo-css') && document.head.appendChild(qismocss);
             }

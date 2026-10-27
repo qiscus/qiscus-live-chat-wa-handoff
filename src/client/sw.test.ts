@@ -286,3 +286,19 @@ describe("page <-> SW context contract", () => {
     expect(SW_SOURCE).toContain(`"${CTX_KEY}"`)
   })
 })
+
+describe("sw.js served under a path prefix (synthetic)", () => {
+  // qismo-api serves the app under a sub-path; the worker's prefix is its own scope.
+  const PREFIX = "/api/v2/live_handover/w/"
+
+  test("icons, the notification click and the offline shell all live under the prefix", async () => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN, PREFIX)
+    await withContext(CTX)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()[0]!.options.icon).toBe(`${PREFIX}img/pwa/icon-192.png`)
+    expect(visible()[0]!.options.badge).toBe(`${PREFIX}img/pwa/badge-96.png`)
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: visible()[0]!.options.data } })
+    expect(sw.opened).toEqual([`${PREFIX}widget.html?source=notification`])
+  })
+})
+

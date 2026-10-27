@@ -31,20 +31,25 @@ const TITLE = "Live Chat"
 const BODY = "Ada balasan baru dari agen. Ketuk untuk membuka percakapan."
 const PREVIEW_MAX = 120
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|svg)(\?|#|$)/i
-const ICON = "/img/pwa/icon-192.png"
-const BADGE = "/img/pwa/badge-96.png"
-const RESUME_PATH = "/widget.html"
-const RESUME_URL = "/widget.html?source=notification"
 const HOUSEKEEPING_TAG = "handoff-housekeeping"
 
 const SHELL_CACHE = "handoff-shell-v2"
 const SHELL_PREFIX = "handoff-shell-"
-const SHELL = ["/offline.html", "/manifest.webmanifest", "/img/pwa/icon-192.png", "/img/pwa/icon-512.png"]
 
 // MUST match src/client/swContext.ts.
 const CTX_DB = "qiscus-handoff-push"
 const CTX_STORE = "ctx"
 const CTX_KEY = "current"
+
+// The path prefix the app is served under ("/" on its own domain, or a sub-path
+// when another server serves it, e.g. qismo-api at /api/v2/live_handover/w/):
+// the worker's scope is the prefix itself.
+const BASE = new URL(self.registration.scope).pathname
+const ICON = BASE + "img/pwa/icon-192.png"
+const BADGE = BASE + "img/pwa/badge-96.png"
+const RESUME_PATH = BASE + "widget.html"
+const RESUME_URL = BASE + "widget.html?source=notification"
+const SHELL = [BASE + "offline.html", BASE + "manifest.webmanifest", BASE + "img/pwa/icon-192.png", BASE + "img/pwa/icon-512.png"]
 
 // ------------------------------------------------------------------ context
 
@@ -229,7 +234,7 @@ function routeFetch(event) {
 
   if (req.mode === "navigate" && url.pathname === RESUME_PATH) {
     event.respondWith(
-      fetch(req).catch(async () => (await caches.match("/offline.html")) || new Response("Offline", { status: 503 })),
+      fetch(req).catch(async () => (await caches.match(BASE + "offline.html")) || new Response("Offline", { status: 503 })),
     )
     return
   }

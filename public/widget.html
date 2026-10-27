@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <title>Live Chat</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#27b199" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/img/pwa/icon-192.png" />
-    <link rel="apple-touch-icon" href="/img/pwa/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="img/pwa/icon-192.png" />
+    <link rel="apple-touch-icon" href="img/pwa/apple-touch-icon-180.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Live Chat" />
-    <script src="/js/push/handoff-push.js"></script>
+    <script src="js/push/handoff-push.js"></script>
     <style>
       html,
       body {
@@ -57,10 +57,16 @@
        * this page's own origin; otherwise a crafted link could run foreign JS
        * or send the invite token elsewhere.
        */
+      // Served under a path prefix means qismo-api is serving this page itself
+      // (/api/v2/live_handover/w/): the API is then this page's own origin and
+      // the room is the one next to this page, under the same prefix (no
+      // trailing slash: QismoFull appends "/iframes/v5/..."). At a domain root
+      // the production hosts stay the defaults.
+      var prefixed = new URL(".", location.href).pathname !== "/";
       var DEFAULTS = {
-        scriptUrl: new URL("/js/qismo-full-v5.js", location.href).href,
-        baseUrl: "https://qismo.qiscus.com",
-        iframeUrl: "https://omnichannel.qiscus.com",
+        scriptUrl: new URL("js/qismo-full-v5.js", location.href).href,
+        baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com",
+        iframeUrl: prefixed ? new URL(".", location.href).href.replace(/\/$/, "") : "https://omnichannel.qiscus.com",
       };
       var statusEl = document.getElementById("handover-status");
 
@@ -81,7 +87,11 @@
       // scriptUrl/iframeUrl may also point at this page's own origin (bundle and
       // handoff room served by this Worker).
       // Returns the default when absent, null when present but not allowed.
+      // Under a prefix (served by qismo-api on the dashboard's own host) no
+      // override is read at all: a crafted link could otherwise load a script
+      // from another *.qiscus.* host into that origin, or send #t= elsewhere.
       function fromQuery(name) {
+        if (prefixed) return DEFAULTS[name];
         var raw = new URLSearchParams(location.search).get(name);
         if (!raw) return DEFAULTS[name];
         try {
@@ -115,6 +125,10 @@
           target: document.body,
           props: {
             staging: false,
+            // The bundle reads baseUrl/iframeUrl (and channel_id, display_name,
+            // unique_id, extra_fields) from the query too, ahead of these
+            // options. Under a prefix that would undo fromQuery() above.
+            readQueryParams: !prefixed,
             options: { baseUrl: env.baseUrl, qismoIframeUrl: env.iframeUrl },
             onEvent: function (event) {
               if (event.event_name === "qiscus:handoff-ready") {

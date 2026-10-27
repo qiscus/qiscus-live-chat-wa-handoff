@@ -11,10 +11,12 @@ function pngSize(bytes: Uint8Array): [number, number] {
 }
 
 describe("manifest.webmanifest", () => {
+  // Relative on purpose: resolved against the manifest's own URL, so the same file
+  // works at a domain root and under a sub-path (see src/client/base.ts).
   test("stable id, same-origin start_url and scope", () => {
-    expect(manifest.id).toBe("/widget.html")
-    expect(manifest.start_url).toBe("/widget.html?source=pwa")
-    expect(manifest.scope).toBe("/")
+    expect(manifest.id).toBe("widget.html")
+    expect(manifest.start_url).toBe("widget.html?source=pwa")
+    expect(manifest.scope).toBe("./")
     expect(manifest.display).toBe("standalone")
   })
 
@@ -28,7 +30,7 @@ describe("manifest.webmanifest", () => {
 
   test("every icon exists with the declared size; a maskable icon is present", async () => {
     for (const icon of manifest.icons) {
-      const bytes = new Uint8Array(await Bun.file(pub(icon.src.slice(1))).arrayBuffer())
+      const bytes = new Uint8Array(await Bun.file(pub(icon.src)).arrayBuffer())
       const [w, h] = pngSize(bytes)
       expect(`${w}x${h}`).toBe(icon.sizes)
     }
@@ -48,5 +50,59 @@ describe("manifest.webmanifest", () => {
     const html = await Bun.file(pub("offline.html")).text()
     expect(html).not.toMatch(/<script\s+src=/i)
     expect(html).not.toMatch(/https?:\/\//)
+  })
+})
+
+describe("served under a path prefix", () => {
+  // qismo-api serves these files under /api/v2/live_handover/w/. A root-absolute URL
+  // ("/js/x.js") would then point outside the prefix, so the static pages must only use
+  // relative ones, and scripts must derive their own prefix.
+  const rootAbsolute = /(?:href|src|action)=["']\/(?!\/)/
+
+  for (const file of ["widget.html", "live-handover-room.html", "offline.html"]) {
+    test(`${file} has no root-absolute href/src`, async () => {
+      expect(rootAbsolute.test(await Bun.file(pub(file)).text())).toBe(false)
+    })
+  }
+
+  test("the manifest has no root-absolute URL", () => {
+    for (const url of [manifest.id, manifest.start_url, manifest.scope, ...manifest.icons.map((i: { src: string }) => i.src)])
+      expect(url.startsWith("/")).toBe(false)
+  })
+
+  test("the service worker derives its prefix from its own scope, not from literals", async () => {
+    const sw = await Bun.file(pub("sw.js")).text()
+    for (const literal of ['"/widget.html', '"/offline.html', '"/img/', '"/manifest.webmanifest'])
+      expect(sw).not.toContain(literal)
+  })
+
+  test("the room's assets are 3 levels up (<prefix>iframes/v5/<app>/live-handover-room)", async () => {
+    const html = await Bun.file(pub("live-handover-room.html")).text()
+    for (const rel of ["css/qiscus-sdk.3.2.12.css", "js/qiscus-sdk.3.2.12.js", "js/third-party/aes.js", "js/push/handoff-room.js"]) {
+      expect(html).toContain(`"../../../${rel}"`)
+      expect(await Bun.file(pub(rel)).exists()).toBe(true)
+    }
+  })
+
+  test("widget.html reads no scriptUrl/baseUrl/iframeUrl override when prefixed", async () => {
+    const html = await Bun.file(pub("widget.html")).text()
+    const body = /function fromQuery\(name\) \{\n([\s\S]*?)\n      \}/.exec(html)?.[1] ?? ""
+    expect(body.trim().startsWith("if (prefixed) return DEFAULTS[name];")).toBe(true)
+  })
+
+  test("widget.html stops the bundle reading the query when prefixed", async () => {
+    // qismo-full-v5.js reads ?baseUrl=/?iframeUrl= ahead of its options unless
+    // readQueryParams is false (packages/qismo-widget/src/FullWidget.svelte).
+    const html = await Bun.file(pub("widget.html")).text()
+    const props = /new QismoFull\(\{[\s\S]*?props: \{([\s\S]*?)onEvent:/.exec(html)?.[1] ?? ""
+    expect(props).toContain("readQueryParams: !prefixed,")
+    const bundle = await Bun.file(pub("js/qismo-full-v5.js")).text()
+    expect(bundle).toContain("readQueryParams")
+  })
+
+  test("widget.html defaults the API and the room to its own prefix only when prefixed", async () => {
+    const html = await Bun.file(pub("widget.html")).text()
+    expect(html).toContain('baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com"')
+    expect(html).toContain('iframeUrl: prefixed ? new URL(".", location.href).href.replace(/\\/$/, "") : "https://omnichannel.qiscus.com"')
   })
 })

@@ -278,7 +278,9 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
     expect(res.status).toBe(200)
-    expect(((await res.json()) as { start_url: string }).start_url).toBe("/widget.html?source=pwa")
+    // Relative since the page can be served under a prefix; resolves against the manifest URL.
+    const startUrl = ((await res.json()) as { start_url: string }).start_url
+    expect(new URL(startUrl, res.url).href).toBe(`${ORIGIN}/widget.html?source=pwa`)
     expect((await fetch(`${ORIGIN}/sw.js`)).status).toBe(200)
     const cfg = (await (await fetch(`${ORIGIN}/push/config`)).json()) as { status: string }
     expect(cfg.status).toBe("configured")
@@ -838,6 +840,52 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
       } finally {
         await configurePush(true)
       }
+    },
+    60_000,
+  )
+
+  test(
+    "under a path prefix, ?baseUrl=/?iframeUrl= cannot send the invite to another host",
+    async () => {
+      upstream.reset()
+      const PREFIX = "/api/v2/live_handover/w/"
+      const STAGING = "https://qismo-stag2.qiscus.io"
+      const ctx = await newContext()
+      const foreign: string[] = []
+      const exchanges: string[] = []
+      ctx.on("request", (r) => {
+        if (new URL(r.url()).origin === STAGING) foreign.push(r.url())
+      })
+      await ctx.route(`${STAGING}/**`, (r) => r.abort())
+      // qismo-api on the dashboard host: the API at its root, this page under PREFIX
+      await ctx.route(`${HOST}/**`, async (r) => {
+        const url = new URL(r.request().url())
+        if (url.pathname === "/api/v2/live_handover/exchange") {
+          if (r.request().method() === "POST") exchanges.push(url.href)
+          return fakeQismo(r)
+        }
+        if (!url.pathname.startsWith(PREFIX)) return r.fulfill({ status: 404, body: "" })
+        const path = "/" + url.pathname.slice(PREFIX.length)
+        if (path === "/js/qiscus-sdk.3.2.12.js") return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
+        const res = await r.fetch({ url: ORIGIN + path + url.search })
+        await r.fulfill({ response: res })
+      })
+      const page = await ctx.newPage()
+      const q = `?baseUrl=${encodeURIComponent(STAGING)}&iframeUrl=${encodeURIComponent(STAGING)}`
+      await page.goto(`${HOST}${PREFIX}widget.html${q}#t=synthetic-invite-A`)
+      // settled either way: the room is mounted, or the exchange failed
+      await page.waitForFunction(
+        () => !!document.getElementById("qcw-iframe") || document.getElementById("handover-status")!.textContent !== "Menghubungkan…",
+        null,
+        { timeout: 15_000 },
+      )
+      expect(foreign).toEqual([])
+      expect(exchanges).toEqual([`${HOST}/api/v2/live_handover/exchange`])
+      const src = await page.evaluate(() => (document.getElementById("qcw-iframe") as HTMLIFrameElement | null)?.src)
+      expect(src).toStartWith(`${HOST}${PREFIX}iframes/v5/synthapp/live-handover-room?`)
+      // the room/push keep fetching through the proxy; don't fail on teardown
+      await ctx.unrouteAll({ behavior: "ignoreErrors" })
+      await ctx.close()
     },
     60_000,
   )
