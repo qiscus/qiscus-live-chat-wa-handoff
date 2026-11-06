@@ -264,6 +264,23 @@ or Flash was exercised.
 outputs are committed, like `qismo-full-v5.js`, and a test fails if they are
 stale. `bun run icons` regenerates `public/img/pwa/`.
 
+## OmniForm in the room (optional)
+
+The room page can open an OmniForm link (`<form origin>/e/<token>`) in a bottom
+sheet instead of a new tab, and shows the submitted answers as a table. It is the
+same feature as multichannel-frontend PR #2464 and is **off by default**. Set these
+Worker variables (bound by `alchemy.run.ts` when set in the deploying shell):
+
+| Variable | Value |
+| --- | --- |
+| `OMNIFORM_WIDGET_ENABLED` | `true` to turn it on (`1`/`on`/`yes` also work) |
+| `OMNIFORM_ALLOWED_ORIGINS` | comma-separated canonical https origins of the form host, e.g. `https://form.example.com`. Empty allows none; one malformed entry makes the widget allow none |
+
+The Worker writes them into `window.qiscusOmniForm` of
+`/iframes/v5/:app_code/live-handover-room` before the SDK script loads. Submissions
+reach the room through qismo-api (`POST /api/v2/internal/form/submissions`, BE PR
+#2151); nothing else is needed here.
+
 ## Develop and deploy
 
 Prerequisites: Bun for dependency installation/typechecking, Node.js for the

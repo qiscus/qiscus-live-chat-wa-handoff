@@ -15,6 +15,7 @@
 import * as Alchemy from "alchemy"
 import * as Cloudflare from "alchemy/Cloudflare"
 import * as Effect from "effect/Effect"
+import { OMNIFORM_ENV_KEYS } from "./src/omniform-config"
 import { PUSH_ENV_KEYS } from "./src/push/config"
 
 // Custom domain per stage. The stage MUST be passed explicitly (--stage):
@@ -33,7 +34,8 @@ export const STAGE_DOMAINS: Record<string, string> = {
 // Firebase service-account JSON here — the Worker does not send pushes.
 // With none set, /push/config reports `unconfigured` and push stays off.
 const pushEnv: Record<string, string> = {}
-for (const key of PUSH_ENV_KEYS) {
+// OmniForm embed switches (OMNIFORM_WIDGET_ENABLED, OMNIFORM_ALLOWED_ORIGINS) are bound the same way.
+for (const key of [...PUSH_ENV_KEYS, ...OMNIFORM_ENV_KEYS]) {
   const value = process.env[key]?.trim()
   if (value) pushEnv[key] = value
 }

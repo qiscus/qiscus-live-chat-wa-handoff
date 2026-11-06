@@ -16,7 +16,9 @@
         - query params are read in the browser (URLSearchParams) instead of
           being interpolated server-side;
         - SDK_BASE_URL (Blade: Config app.sdk_base_url) is the constant below;
-        - title uses the default product name (no white-label config).
+        - title uses the default product name (no white-label config);
+        - the OmniForm embed settings (Blade: _omniform-config) are injected by
+          src/worker.ts at the omniform-config marker below, from env.
       Keep in sync with the Blade view when it changes.
     -->
     <link rel="stylesheet" href="../../../css/qiscus-sdk.3.2.12.css" />
@@ -160,6 +162,7 @@
         })();
     </script>
     <div id="qiscus-widget"></div>
+    <!-- omniform-config -->
     <script src="../../../js/qiscus-sdk.3.2.12.js"></script>
     <script src="../../../js/third-party/aes.js"></script>
     <script src="../../../js/push/handoff-room.js"></script>
