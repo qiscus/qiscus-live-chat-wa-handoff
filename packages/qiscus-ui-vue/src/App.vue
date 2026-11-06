@@ -108,6 +108,12 @@ export default {
       // rely on QiscusUI existing yet — it stashes the value on window instead.
       hideSystemEventAgentName:
         typeof window !== 'undefined' && window.hideSystemEventAgentName === true,
+      // OmniForm embed settings from the widget page:
+      // { enabled, allowedOrigins, labels } (see lib/omniForm.js). Declared
+      // here so the page's later `QiscusUI.omniForm = {...}` is reactive;
+      // seeded from window.qiscusOmniForm for a page that sets it earlier.
+      omniForm:
+        (typeof window !== 'undefined' && window.qiscusOmniForm) || null,
       displayMode: 'widget',
       chatTarget(target) {
         return self.core.chatTarget(target).then(
