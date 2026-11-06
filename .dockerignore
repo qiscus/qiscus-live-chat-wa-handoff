@@ -1,0 +1,7 @@
+.git
+node_modules
+packages
+e2e
+.alchemy
+.wrangler
+.env*
