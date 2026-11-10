@@ -33,6 +33,11 @@ describe("room page injection", () => {
     expect(html.indexOf("qiscusOmniForm")).toBeLessThan(html.indexOf("sdk.js"))
     expect(html).not.toContain("<!-- omniform-config -->")
   })
+  test("served as HTML even when the asset response leaves the type implicit", async () => {
+    const bare = { fetch: async () => new Response(roomHtml) } as unknown as Fetcher
+    const res = await app.request("/iframes/v5/someapp/live-handover-room", {}, { ASSETS: bare })
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8")
+  })
   test("reflects env", async () => {
     const html = await (await room({ OMNIFORM_WIDGET_ENABLED: "true", OMNIFORM_ALLOWED_ORIGINS: "https://form.example" })).text()
     expect(html).toContain('{"enabled":true,"allowedOrigins":["https://form.example"]}')

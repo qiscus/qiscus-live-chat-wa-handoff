@@ -424,7 +424,7 @@
                 //- end of flow response bubble
 
                 //- OmniForm answers (nfm_reply name "omniform", posted by qismo-api)
-                comment-omni-form-answer(v-if="omniFormAnswer" :answer="omniFormAnswer" :attachments-label="omniFormAttachmentsLabel")
+                comment-omni-form-answer(v-if="omniFormAnswer" :answer="omniFormAnswer" :attachments-label="omniFormAttachmentsLabel" :mask-values="!!(core && core.UI && core.UI.maskFlowResponse)")
 
               div(class="comment-text" v-if="comment.type == 'text' && isPreviousSessionMessageNotifier")
                 image-loader(v-if="comment.isAttachment(comment.message)"
@@ -602,7 +602,16 @@ export default {
     // OmniForm answers carried by this message (see ../lib/omniForm.js), else
     // null and the message shows as its plain-text fallback.
     omniFormAnswer() {
-      return this.comment ? parseOmniFormAnswer(this.comment.extras) : null;
+      if (!this.comment) return null;
+      const answer = parseOmniFormAnswer(this.comment.extras);
+      const interactive = (this.comment.extras || {}).interactive || {};
+      // Invalid structured data must not expose the raw answer/URLs as fallback.
+      if (!answer && this.core && this.core.UI && this.core.UI.maskFlowResponse &&
+          interactive.type === 'nfm_reply' && interactive.nfm_reply &&
+          interactive.nfm_reply.name === 'omniform') {
+        return { formName: '', fields: [{ label: '', value: '********' }], attachments: [] };
+      }
+      return answer;
     },
     omniFormAttachmentsLabel() {
       return omniFormLabel(omniFormConfig(this.core && this.core.UI).labels, 'attachments');
@@ -926,6 +935,9 @@ export default {
       return desc;
     },
     isMeFileImageAttachment() {
+      // The structured answer's fallback includes upload URLs, but the whole
+      // message is still a form reply, not a standalone image attachment.
+      if (this.omniFormAnswer) return false;
       const payload = this.comment.payload || {};
       // A caption also rides after the closing tag on a plain-text
       // `[file]url[/file] caption` send — that bubble keeps its background.

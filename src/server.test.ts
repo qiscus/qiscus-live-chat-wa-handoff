@@ -4,6 +4,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { join } from "node:path"
 import { brotliDecompressSync, gunzipSync } from "node:zlib"
+import { OMNIFORM_MARKER, type OmniformEnv, omniformScript, readOmniformConfig } from "./omniform-config"
 import { etagMatches, pickEncoding, startServer } from "./server"
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public")
@@ -23,6 +24,14 @@ const get = (path: string, headers: Record<string, string> = {}, method = "GET")
     headers: { "Accept-Encoding": "identity", ...headers },
     decompress: false,
   } as RequestInit)
+
+// The room page as the Hono app serves it: the static file with the OmniForm
+// config injected at its marker (see src/omniform-config.ts).
+const roomPage = async (env: OmniformEnv = {}) =>
+  (await Bun.file(join(PUBLIC_DIR, "live-handover-room.html")).text()).replace(
+    OMNIFORM_MARKER,
+    omniformScript(readOmniformConfig(env)),
+  )
 
 const STATIC_PATHS = [
   "/widget.html",
@@ -60,10 +69,29 @@ describe("paths compared with Cloudflare", () => {
     expect(((await res.json()) as { status: string }).status).toBe("unconfigured")
   })
 
-  test("/iframes/v5/:appCode/live-handover-room maps to the static page", async () => {
+  test("/iframes/v5/:appCode/live-handover-room maps to the static page, OmniForm off", async () => {
     const res = await get("/iframes/v5/test-app/live-handover-room")
     expect(res.status).toBe(200)
-    expect(await res.text()).toBe(await Bun.file(join(PUBLIC_DIR, "live-handover-room.html")).text())
+    const html = await res.text()
+    expect(html).toBe(await roomPage())
+    expect(html).toContain('window.qiscusOmniForm = {"enabled":false,"allowedOrigins":[]}')
+  })
+
+  test("OmniForm switches in the container env reach the room page", async () => {
+    const env = { OMNIFORM_WIDGET_ENABLED: "true", OMNIFORM_ALLOWED_ORIGINS: " https://form.example " }
+    const withEnv = startServer({ port: 0, publicDir: PUBLIC_DIR, env })
+    try {
+      const res = await fetch(`http://127.0.0.1:${withEnv.port}/iframes/v5/test-app/live-handover-room`, {
+        headers: { "Accept-Encoding": "identity" },
+      })
+      const html = await res.text()
+      expect(html).toBe(await roomPage(env))
+      const config = html.indexOf('window.qiscusOmniForm = {"enabled":true,"allowedOrigins":["https://form.example"]}')
+      expect(config).toBeGreaterThan(-1)
+      expect(config).toBeLessThan(html.indexOf("qiscus-sdk.3.2.12.js\"></script>"))
+    } finally {
+      withEnv.stop(true)
+    }
   })
 
   test("missing files and traversal are 404", async () => {
@@ -119,7 +147,16 @@ describe("compression", () => {
     const res = await get("/iframes/v5/test-app/live-handover-room", { "Accept-Encoding": "gzip" })
     expect(res.headers.get("content-encoding")).toBe("gzip")
     const html = gunzipSync(new Uint8Array(await res.arrayBuffer())).toString()
-    expect(html).toBe(await Bun.file(join(PUBLIC_DIR, "live-handover-room.html")).text())
+    expect(html).toBe(await roomPage())
+  })
+
+  test("the room page is rewritten from the plain file, then compressed (br, static ETag sent)", async () => {
+    // The static file's ETag must not turn the rewritten page into a 304.
+    const staticEtag = (await get("/live-handover-room.html")).headers.get("etag")!
+    const res = await get("/iframes/v5/test-app/live-handover-room", { "Accept-Encoding": "br", "If-None-Match": staticEtag })
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-encoding")).toBe("br")
+    expect(brotliDecompressSync(new Uint8Array(await res.arrayBuffer())).toString()).toBe(await roomPage())
   })
 
   test("pickEncoding honours q-values and *", () => {

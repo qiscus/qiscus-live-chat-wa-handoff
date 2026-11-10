@@ -276,10 +276,14 @@ Worker variables (bound by `alchemy.run.ts` when set in the deploying shell):
 | `OMNIFORM_WIDGET_ENABLED` | `true` to turn it on (`1`/`on`/`yes` also work) |
 | `OMNIFORM_ALLOWED_ORIGINS` | comma-separated canonical https origins of the form host, e.g. `https://form.example.com`. Empty allows none; one malformed entry makes the widget allow none |
 
+On Kubernetes, set the same two names as container env: `src/server.ts` passes
+them to the app with the push keys.
+
 The Worker writes them into `window.qiscusOmniForm` of
 `/iframes/v5/:app_code/live-handover-room` before the SDK script loads. Submissions
 reach the room through qismo-api (`POST /api/v2/internal/form/submissions`, BE PR
-#2151); nothing else is needed here.
+#2151); nothing else is needed here. The answers show in the same card as a WA
+Flow reply (MCF PR #2466): long questions wrap above their answers.
 
 ## Develop and deploy
 
