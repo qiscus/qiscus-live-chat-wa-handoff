@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test"
 import { BUNDLES, OUT_DIR, buildAll } from "../../scripts/build-client"
 
-describe("public/js/push bundles", () => {
+describe("public/js client bundles", () => {
   test(
     "are up to date with src/client (run `bun run build:client`)",
     async () => {
@@ -16,10 +16,10 @@ describe("public/js/push bundles", () => {
   )
 
   test("the page bundle does not inline Firebase and the room bundle stays tiny", async () => {
-    const push = await Bun.file(new URL("handoff-push.js", OUT_DIR)).text()
-    const room = await Bun.file(new URL("handoff-room.js", OUT_DIR)).text()
-    expect(push).not.toContain("firebaseinstallations")
-    expect(push.length).toBeLessThan(40_000)
+    const page = await Bun.file(new URL("handoff-page.js", OUT_DIR)).text()
+    const room = await Bun.file(new URL("push/handoff-room.js", OUT_DIR)).text()
+    expect(page).not.toContain("firebaseinstallations")
+    expect(page.length).toBeLessThan(45_000)
     expect(room.length).toBeLessThan(10_000)
   })
 

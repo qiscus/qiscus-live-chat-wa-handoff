@@ -22,59 +22,53 @@ copy a token into the page URL yourself. The fragment is not sent in HTTP reques
 
 ## Page URL configuration
 
-The sample defaults to Qiscus production:
-
-- Widget bundle: `/js/qismo-full-v5.js`, served by this same Worker
-- API base URL: `https://qismo.qiscus.com`
-- Live Chat iframe host: `https://omnichannel.qiscus.com`
-
-Use the resulting Worker URL as the `page_url` in the WhatsApp handoff settings:
+`widget.html` carries no inline script (CSP `script-src 'self'`). The page is
+`public/js/handoff-page.js` (built from `src/client/page.ts`), which reads its
+settings from the URL, mounts this deployment's own `public/js/qismo-full-v5.js`
+and wires push + resume:
 
 ```text
-https://<worker-host>/widget.html
+https://<widget-host>/widget.html?baseUrl=<qismo API>&sdkBaseUrl=<Qiscus SDK API>&iframeUrl=<room host>#t=<invite>
 ```
 
-The page loads `public/js/qismo-full-v5.js`, a copy of the `qismo-full-v5.js`
-bundle built in `multichannel-frontend` (`qismo-widget`). Bundling it here keeps
-the widget working while the Qiscus-hosted copy is missing or outdated. To
-update it, rebuild in `multichannel-frontend` and copy `public/js/qismo-full-v5.js`
-(and its `.map`) into `public/js/` here, then redeploy.
+| parameter | default | allowed (`src/client/origins.ts`) |
+|---|---|---|
+| `baseUrl` | `https://qismo.qiscus.com` | `qismo`, `multichannel-api`, `multichannel-api-latest`, `multichannel`, `omnichannel` `.qiscus.com`; `qismo-stag<N>.qiscus.io` |
+| `sdkBaseUrl` | `https://api3.qiscus.com` (ID) | `api3.qiscus.com`, `api-my.qiscus.com` (MY) |
+| `iframeUrl` | this deployment (room + UI bundle released together) | this origin, or a `baseUrl` host |
 
-The page reads the invite token and optional `scriptUrl` / `baseUrl` /
-`iframeUrl` overrides from the page URL, exchanges the token with the configured
-API, then opens the returned room. Production hosts are used when no overrides
-are present. No app ID needs to be embedded in this handoff-only page.
+Each value must be one of these exact origins (only the origin is kept): a
+wildcard over `*.qiscus.com` / `*.qiscus.io` would also trust subdomains that
+host other people's content, and `baseUrl` receives the invite while
+`sdkBaseUrl` receives the identity token and the conversation. An unknown host
+stops the page ("Konfigurasi widget tidak valid.") without contacting it.
+Loopback hosts are accepted only while the page itself runs on loopback. There
+is no `scriptUrl` override any more. The lists are code, not config: a new
+region or lane is a one-line change, deployed like any other.
 
-For another environment, the settings URL can override the API and iframe hosts:
+`sdkBaseUrl` follows the customer's login: QismoFull passes it to the room as
+`sdk_base_url`, the room logs in against it, and the stored session keeps it, so
+a resume, push registration and identity verification stay on that region's
+SDK host.
 
-```text
-https://<worker-host>/widget.html?baseUrl=<api-base-url>&iframeUrl=<iframe-host>
+### Qiscus-hosted handoff (qismo-api)
+
+qismo-api builds this URL from its deployment config; a channel's own
+`page_url` (client self-hosting) still wins:
+
+```dotenv
+# qismo-stag4.qiscus.io
+LIVE_HANDOVER_HOSTED_WIDGET_URL=https://live-widget-staging.qiscus.com
+LIVE_HANDOVER_HOSTED_API_BASE_URL=https://qismo-stag4.qiscus.io
+# sdkBaseUrl comes from qismo-api's existing EXTERNAL_QISCUS_SDK_URL (MY: https://api-my.qiscus.com)
 ```
 
-For staging, override only the API and iframe hosts; the bundled script stays:
+These are qismo-api env variables, not widget container variables.
 
-```text
-https://<worker-host>/widget.html?baseUrl=https%3A%2F%2Fqismo-stag2.qiscus.io&iframeUrl=https%3A%2F%2Fqismo-stag2.qiscus.io
-```
-
-`scriptUrl` can still point at another bundle (e.g. a Qiscus-hosted build).
-
-`scriptUrl`, `baseUrl` and `iframeUrl` only accept HTTPS URLs on `qiscus.com` /
-`qiscus.io` (and their subdomains), or `localhost` / `127.0.0.1` for local
-builds; `scriptUrl` also accepts this page's own origin. Anything else is
-refused so a crafted link cannot inject arbitrary
-JavaScript or send the invite token to a foreign host. The page passes
-`baseUrl` / `iframeUrl` to `QismoFull` as options, so it works with bundles that
-do not parse those query params themselves.
-
-Served under a path prefix (qismo-api ships these files at `/api/v2/live_handover/w/`), the page
-reads **no** `scriptUrl` / `baseUrl` / `iframeUrl` override: the bundle and the room are the ones
-next to the page and the API is the page's own origin. That host is the agent dashboard's, so a
-crafted link must not be able to load a script from another `*.qiscus.*` host into it, nor send the
-invite token to another API. The page also mounts `QismoFull` with `readQueryParams: false` there:
-the bundle otherwise reads `baseUrl` / `iframeUrl` (allowlisted Qiscus origins, staging included)
-from the query ahead of the options the page passes, plus `channel_id` / `display_name` /
-`unique_id` / `extra_fields`. At a domain root nothing changes.
+`public/js/qismo-full-v5.js` is built from the fork in `packages/qismo-widget`
+(`bun run build:vendor`, see `packages/UPSTREAM.md`). The page always mounts it
+with `readQueryParams: false`, so the bundle does not read `baseUrl` /
+`iframeUrl` / identity fields from the query around the checks above.
 
 Never put an app secret or a raw invite token in query parameters.
 
@@ -94,7 +88,7 @@ customer clicks "Aktifkan notifikasi" (explicit opt-in, top page)
   -> Notification permission
   -> FCM web token: firebase/messaging getToken() with the PUBLIC Firebase web
      config + VAPID public key from GET /push/config, minted against /sw.js
-  -> POST https://api3.qiscus.com/api/v2/sdk/set_user_device_token
+  -> POST <sdkBaseUrl, default https://api3.qiscus.com>/api/v2/sdk/set_user_device_token
        {device_token, device_platform: "web", is_development: false}
      authenticated as the handoff CUSTOMER (their own SDK session)
 

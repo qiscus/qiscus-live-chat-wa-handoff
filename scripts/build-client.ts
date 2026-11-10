@@ -1,8 +1,8 @@
 /**
- * Builds the browser bundles served from public/js/push/:
- *   handoff-push.js  (IIFE) top-level push + resume wiring for /widget.html
- *   handoff-room.js  (IIFE) session persist/resume helpers for the room iframe
- *   firebase.js      (ESM)  firebase/messaging token minting, loaded lazily
+ * Builds the browser bundles served from public/js/:
+ *   handoff-page.js       (IIFE) the whole /widget.html page: settings, QismoFull, push + resume
+ *   push/handoff-room.js  (IIFE) session persist/resume helpers for the room iframe
+ *   push/firebase.js      (ESM)  firebase/messaging token minting, loaded lazily
  *
  * The outputs are committed (like public/js/qismo-full-v5.js) because Alchemy
  * uploads public/ as-is. `bun run build:client` rewrites them; the test
@@ -11,12 +11,12 @@
 const root = new URL("../", import.meta.url)
 
 export const BUNDLES = [
-  { entry: "src/client/main.ts", out: "handoff-push.js", format: "iife" },
-  { entry: "src/client/room.ts", out: "handoff-room.js", format: "iife" },
-  { entry: "src/client/firebase.ts", out: "firebase.js", format: "esm" },
+  { entry: "src/client/page.ts", out: "handoff-page.js", format: "iife" },
+  { entry: "src/client/room.ts", out: "push/handoff-room.js", format: "iife" },
+  { entry: "src/client/firebase.ts", out: "push/firebase.js", format: "esm" },
 ] as const
 
-export const OUT_DIR = new URL("public/js/push/", root)
+export const OUT_DIR = new URL("public/js/", root)
 
 export async function buildAll(): Promise<Map<string, string>> {
   const out = new Map<string, string>()
@@ -38,6 +38,6 @@ export async function buildAll(): Promise<Map<string, string>> {
 if (import.meta.main) {
   for (const [name, code] of await buildAll()) {
     await Bun.write(new URL(name, OUT_DIR), code)
-    console.log(`wrote public/js/push/${name} (${code.length} bytes)`)
+    console.log(`wrote public/js/${name} (${code.length} bytes)`)
   }
 }

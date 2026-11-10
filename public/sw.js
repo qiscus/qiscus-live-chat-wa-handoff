@@ -2,7 +2,7 @@
  * Live Handover — service worker (Web Push via the existing Qiscus FCM path).
  *
  * No Firebase SDK here: FCM delivers an ordinary Web Push message, so a plain
- * `push` listener handles it. The page (/js/push/handoff-push.js) mints the FCM
+ * `push` listener handles it. The page (/js/handoff-page.js) mints the FCM
  * token through this registration and registers it with Qiscus.
  *
  * What it announces: a message in THE handoff room that is not the customer's

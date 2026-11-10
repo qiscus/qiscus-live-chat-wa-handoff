@@ -83,26 +83,24 @@ describe("served under a path prefix", () => {
       expect(await Bun.file(pub(rel)).exists()).toBe(true)
     }
   })
+})
 
-  test("widget.html reads no scriptUrl/baseUrl/iframeUrl override when prefixed", async () => {
+describe("widget.html runs no inline script", () => {
+  test("only same-origin script files, under a script-src 'self' CSP", async () => {
     const html = await Bun.file(pub("widget.html")).text()
-    const body = /function fromQuery\(name\) \{\n([\s\S]*?)\n      \}/.exec(html)?.[1] ?? ""
-    expect(body.trim().startsWith("if (prefixed) return DEFAULTS[name];")).toBe(true)
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+    expect(scripts.map((m) => m[1]!.trim())).toEqual(['src="js/handoff-page.js" defer'])
+    expect(scripts.every((m) => m[2]!.trim() === "")).toBe(true)
+    expect(html).not.toMatch(/\son[a-z]+=/i) // no inline event handlers either
+    expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'none'; base-uri 'self'" />`)
+    expect(await Bun.file(pub("js/handoff-page.js")).exists()).toBe(true)
   })
 
-  test("widget.html stops the bundle reading the query when prefixed", async () => {
+  test("the page stops QismoFull reading the query itself", async () => {
     // qismo-full-v5.js reads ?baseUrl=/?iframeUrl= ahead of its options unless
     // readQueryParams is false (packages/qismo-widget/src/FullWidget.svelte).
-    const html = await Bun.file(pub("widget.html")).text()
-    const props = /new QismoFull\(\{[\s\S]*?props: \{([\s\S]*?)onEvent:/.exec(html)?.[1] ?? ""
-    expect(props).toContain("readQueryParams: !prefixed,")
-    const bundle = await Bun.file(pub("js/qismo-full-v5.js")).text()
-    expect(bundle).toContain("readQueryParams")
-  })
-
-  test("widget.html defaults the API and the room to its own prefix only when prefixed", async () => {
-    const html = await Bun.file(pub("widget.html")).text()
-    expect(html).toContain('baseUrl: prefixed ? location.origin : "https://qismo.qiscus.com"')
-    expect(html).toContain('iframeUrl: prefixed ? new URL(".", location.href).href.replace(/\\/$/, "") : "https://omnichannel.qiscus.com"')
+    const page = await Bun.file(new URL("./client/page.ts", import.meta.url)).text()
+    expect(page).toContain("readQueryParams: false,")
+    expect(await Bun.file(pub("js/qismo-full-v5.js")).text()).toContain("readQueryParams")
   })
 })

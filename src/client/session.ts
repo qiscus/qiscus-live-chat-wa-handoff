@@ -13,6 +13,8 @@
  * window qismo-api allows (LiveHandover.Config session_ttl_range, 172 800 s).
  */
 
+import { DEFAULT_SDK_ORIGIN, isSdkOrigin } from "./origins"
+
 export const SESSION_KEY = "qiscus-handoff:session:v1"
 export const PREVIOUS_SESSION_KEY = "qiscus-handoff:previous-session:v1"
 export const SESSION_MAX_AGE_MS = 48 * 60 * 60 * 1000
@@ -34,8 +36,15 @@ export interface StoredSession {
   appId: string
   roomId: string
   user: SdkUser
+  /** The Qiscus SDK host this login belongs to (region). Absent = DEFAULT_SDK_ORIGIN. */
+  sdk?: string
   savedAt: number
   expiresAt: number
+}
+
+/** The SDK host a stored login must be used against. */
+export function sessionSdk(s: Pick<StoredSession, "sdk">): string {
+  return s.sdk ?? DEFAULT_SDK_ORIGIN
 }
 
 export type LoadResult =
@@ -75,6 +84,7 @@ function parse(raw: string | null): StoredSession | null {
       typeof s.roomId === "string" &&
       ROOM_ID_RE.test(s.roomId) &&
       isSdkUser(s.user) &&
+      (s.sdk === undefined || (typeof s.sdk === "string" && isSdkOrigin(s.sdk))) &&
       Number.isFinite(s.savedAt) &&
       Number.isFinite(s.expiresAt)
     ) {
@@ -86,10 +96,11 @@ function parse(raw: string | null): StoredSession | null {
 
 export function saveSession(
   storage: KeyValueStorage,
-  input: { appId: string; roomId: string; user: SdkUser },
+  input: { appId: string; roomId: string; user: SdkUser; sdk?: string },
   now: number,
 ): StoredSession {
   if (!APP_CODE_RE.test(input.appId)) throw new Error("invalid app id")
+  if (input.sdk !== undefined && !isSdkOrigin(input.sdk)) throw new Error("invalid sdk host")
   if (!ROOM_ID_RE.test(String(input.roomId))) throw new Error("invalid room id")
   if (!isSdkUser(input.user)) throw new Error("invalid sdk user")
   const user = { ...input.user }
@@ -99,6 +110,7 @@ export function saveSession(
     appId: input.appId,
     roomId: String(input.roomId),
     user,
+    ...(input.sdk && input.sdk !== DEFAULT_SDK_ORIGIN ? { sdk: input.sdk } : {}),
     savedAt: now,
     expiresAt: now + SESSION_MAX_AGE_MS,
   }

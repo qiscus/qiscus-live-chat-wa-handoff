@@ -88,6 +88,8 @@ export interface PushDeps {
     deleteToken(cfg: ConfiguredPushConfig): Promise<void>
   }
   swContext: { write(ctx: SwContext | null): Promise<void> }
+  /** The SDK host this page was pointed at (?sdkBaseUrl=, origins.ts); absent = the ID host. */
+  sdkBaseUrl?: string
   onState(state: PushUiState): void
   /** Operator debug trail. Never receives a token, an e-mail or message content. */
   debug?(...args: unknown[]): void
@@ -102,7 +104,7 @@ interface Registration {
   at: number
 }
 
-type Creds = Pick<StoredSession, "appId" | "user">
+type Creds = Pick<StoredSession, "appId" | "user" | "sdk">
 
 export class PushController {
   private cfg: PushConfig | null = null
@@ -144,7 +146,7 @@ export class PushController {
       return
     }
     const { appId, roomId, identityToken } = room.exchange
-    const r = await verifyIdentityToken(this.deps.fetch, appId, identityToken)
+    const r = await verifyIdentityToken(this.deps.fetch, appId, identityToken, this.deps.sdkBaseUrl)
     this.log("verify_identity_token (cross-origin room)", { ok: r.ok, status: r.status, error: r.error, appId, roomId })
     if (!r.ok || !r.user) {
       await this.teardownPrevious()
@@ -152,7 +154,7 @@ export class PushController {
       return
     }
     try {
-      saveSession(this.deps.storage, { appId, roomId, user: r.user }, this.deps.now())
+      saveSession(this.deps.storage, { appId, roomId, user: r.user, sdk: this.deps.sdkBaseUrl }, this.deps.now())
     } catch (e) {
       this.log("cross-origin session not stored", String(e))
       await this.teardownPrevious()
