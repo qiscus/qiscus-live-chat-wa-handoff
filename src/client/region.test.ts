@@ -39,6 +39,11 @@ describe("page settings from the URL", () => {
     }
   })
 
+  test("region MY: its qismo-api host is allowed", () => {
+    const env = resolveEnv(page(LIVE, { baseUrl: "https://omnichannel-my.qiscus.com" }))
+    expect(env?.baseUrl).toBe("https://omnichannel-my.qiscus.com")
+  })
+
   test("region MY: the SDK host comes from sdkBaseUrl", () => {
     const env = resolveEnv(page(LIVE, { baseUrl: "https://multichannel-api.qiscus.com", sdkBaseUrl: MY }))
     expect(env?.sdkBaseUrl).toBe(MY)

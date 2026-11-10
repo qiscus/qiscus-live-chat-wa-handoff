@@ -26,6 +26,8 @@ export const API_ORIGINS: readonly string[] = [
   "https://multichannel-api-latest.qiscus.com",
   "https://multichannel.qiscus.com",
   "https://omnichannel.qiscus.com",
+  // region MY: qismo-api's OC_BASE_URL there
+  "https://omnichannel-my.qiscus.com",
 ]
 /** qismo staging lanes: qismo-stag.qiscus.io, qismo-stag2.qiscus.io, ... */
 const API_ORIGIN_PATTERNS: readonly RegExp[] = [/^https:\/\/qismo-stag\d*\.qiscus\.io$/]

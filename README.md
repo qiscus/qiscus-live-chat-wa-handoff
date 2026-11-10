@@ -33,7 +33,7 @@ https://<widget-host>/widget.html?baseUrl=<qismo API>&sdkBaseUrl=<Qiscus SDK API
 
 | parameter | default | allowed (`src/client/origins.ts`) |
 |---|---|---|
-| `baseUrl` | `https://qismo.qiscus.com` | `qismo`, `multichannel-api`, `multichannel-api-latest`, `multichannel`, `omnichannel` `.qiscus.com`; `qismo-stag<N>.qiscus.io` |
+| `baseUrl` | `https://qismo.qiscus.com` | `qismo`, `multichannel-api`, `multichannel-api-latest`, `multichannel`, `omnichannel`, `omnichannel-my` `.qiscus.com`; `qismo-stag<N>.qiscus.io` |
 | `sdkBaseUrl` | `https://api3.qiscus.com` (ID) | `api3.qiscus.com`, `api-my.qiscus.com` (MY) |
 | `iframeUrl` | this deployment (room + UI bundle released together) | this origin, or a `baseUrl` host |
 
