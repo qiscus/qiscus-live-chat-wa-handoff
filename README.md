@@ -53,14 +53,15 @@ SDK host.
 
 ### Qiscus-hosted handoff (qismo-api)
 
-qismo-api builds this URL from its deployment config; a channel's own
+qismo-api builds this URL from its deployment config, opt-in per deployment
+(unset `LIVE_HANDOVER_HOSTED_WIDGET_URL` keeps qismo's own page); a channel's own
 `page_url` (client self-hosting) still wins:
 
 ```dotenv
 # qismo-stag4.qiscus.io
 LIVE_HANDOVER_HOSTED_WIDGET_URL=https://live-widget-staging.qiscus.com
 LIVE_HANDOVER_HOSTED_API_BASE_URL=https://qismo-stag4.qiscus.io
-# sdkBaseUrl comes from qismo-api's existing EXTERNAL_QISCUS_SDK_URL (MY: https://api-my.qiscus.com)
+# outside ID: LIVE_HANDOVER_HOSTED_SDK_BASE_URL=<that region's SDK host> (sent as sdkBaseUrl)
 ```
 
 These are qismo-api env variables, not widget container variables.
