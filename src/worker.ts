@@ -19,9 +19,10 @@
  * `/img/*`). It sends no push and holds no secrets.
  */
 import { Hono } from "hono"
+import { OMNIFORM_MARKER, type OmniformEnv, omniformScript, readOmniformConfig } from "./omniform-config"
 import { type PushEnv, readPushConfig } from "./push/config"
 
-type Bindings = { ASSETS: Fetcher } & PushEnv
+type Bindings = { ASSETS: Fetcher } & PushEnv & OmniformEnv
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -64,10 +65,32 @@ app.get("/", (c) => {
 // iframes/v5/live-handover-room.blade.php). QismoFull builds
 // `${iframeUrl}/iframes/v5/<app_code>/live-handover-room?...`; the page reads
 // its query itself, so the Worker only maps the path to the static file.
-app.get("/iframes/v5/:appCode/live-handover-room", (c) => {
+app.get("/iframes/v5/:appCode/live-handover-room", async (c) => {
   const url = new URL(c.req.url)
   url.pathname = "/live-handover-room.html"
-  return c.env.ASSETS.fetch(new Request(url, c.req.raw))
+  // Ask for the plain file: the page is rewritten below, so an encoded body
+  // (the Bun runtime's ASSETS compresses by Accept-Encoding) or a 304 for the
+  // static file's ETag would be wrong here. The response is compressed again
+  // after the rewrite (Cloudflare edge / src/server.ts).
+  const assetHeaders = new Headers(c.req.raw.headers)
+  assetHeaders.delete("accept-encoding")
+  assetHeaders.delete("if-none-match")
+  const res = await c.env.ASSETS.fetch(new Request(url, { method: c.req.method, headers: assetHeaders }))
+  if (!res.ok) return res
+  // OmniForm embed settings (port of the Blade _omniform-config partial): put
+  // them in the page before the SDK script reads window.qiscusOmniForm.
+  const html = await res.text()
+  const headers = new Headers(res.headers)
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  headers.delete("etag")
+  // A string body would otherwise default to text/plain when the asset layer
+  // left the type implicit (e.g. a Response built from Bun.file).
+  headers.set("content-type", "text/html; charset=utf-8")
+  return new Response(html.replace(OMNIFORM_MARKER, omniformScript(readOmniformConfig(c.env))), {
+    status: res.status,
+    headers,
+  })
 })
 
 // widget.html is served

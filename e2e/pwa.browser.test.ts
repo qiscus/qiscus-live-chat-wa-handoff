@@ -161,7 +161,7 @@ async function fakeSdkApi(route: Route) {
 const SDK_STUB = `(function(){
   var BASE='https://api3.qiscus.com';
   var core={selected:{id:0},
-    init:function(c){core.cfg=c;core.AppId=c.AppId;},
+    init:function(c){core.cfg=c;core.AppId=c.AppId;BASE=c.baseURL||BASE;},
     verifyIdentityToken:function(t){return fetch(BASE+'/api/v2/sdk/auth/verify_identity_token',{method:'POST',headers:{'Content-Type':'application/json','QISCUS-SDK-APP-ID':core.AppId},body:JSON.stringify({identity_token:t})}).then(function(r){if(!r.ok)throw r.status;return r.json();}).then(function(j){return j.results;});},
     setUserWithIdentityToken:function(e){core.userData=e.user;setTimeout(function(){core.cfg.options.loginSuccessCallback(e);},0);},
     chatGroup:function(id){return fetch(BASE+'/api/v2/sdk/get_room_by_id?id='+encodeURIComponent(id),{headers:{'QISCUS-SDK-APP-ID':core.AppId,'QISCUS-SDK-USER-ID':core.userData.email,'QISCUS-SDK-TOKEN':core.userData.token}}).then(function(r){if(!r.ok)throw r.status;core.selected={id:id};return r.json();});},
@@ -273,7 +273,33 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   })
 
   const invite = (t: string, selfRoom = true) =>
-    `${ORIGIN}/widget.html${selfRoom ? `?iframeUrl=${encodeURIComponent(ORIGIN)}` : ""}#t=${t}`
+    `${ORIGIN}/widget.html?iframeUrl=${encodeURIComponent(selfRoom ? ORIGIN : "https://omnichannel.qiscus.com")}#t=${t}`
+
+  test("hosted staging page exchanges with the selected qismo lane and keeps the room on the widget host", async () => {
+    for (const n of [1, 2, 4, 8]) {
+      upstream.reset()
+      const api = `https://qismo-stag${n}.qiscus.io`
+      const ctx = await onHttpsHost()
+      const exchanges: string[] = []
+      await ctx.route(api + '/**', async (route) => {
+        if (new URL(route.request().url()).pathname === '/api/v2/live_handover/exchange') exchanges.push(api)
+        await fakeQismo(route)
+      })
+      try {
+        const page = await ctx.newPage()
+        const query = new URLSearchParams({ baseUrl: api, iframeUrl: HOST })
+        await page.goto(`${HOST}/widget.html?${query}#t=synthetic-invite-A`)
+        await page.locator('#qcw-iframe').waitFor()
+        expect(exchanges).toEqual([api])
+        const src = new URL((await page.locator('#qcw-iframe').getAttribute('src'))!)
+        expect(src.origin).toBe(HOST)
+        expect(src.pathname).toBe('/iframes/v5/synthapp/live-handover-room')
+      } finally {
+        await ctx.unrouteAll({ behavior: 'ignoreErrors' })
+        await ctx.close()
+      }
+    }
+  }, 60_000)
 
   test("manifest + service worker are served and the page is installable-shaped", async () => {
     const res = await fetch(`${ORIGIN}/manifest.webmanifest`)
@@ -624,7 +650,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "default cross-origin room: reported, nothing stored, no offer",
+    "explicit cross-origin room: reported, nothing stored, no offer",
     async () => {
       const ctx = await newContext({ grant: true })
       const page = await ctx.newPage()
@@ -637,7 +663,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "first invite, default (remote) room, app in PUSH_APP_CODES: room moves to this origin and guidance is a bubble",
+    "first invite, explicit remote room, app in PUSH_APP_CODES: room moves to this origin and guidance is a bubble",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "synthapp" })
       try {
@@ -699,7 +725,7 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "first invite, default room, app NOT in PUSH_APP_CODES: room stays remote",
+    "first invite, explicit remote room, app NOT in PUSH_APP_CODES: room stays remote",
     async () => {
       await configurePush(true, { PUSH_APP_CODES: "otherapp" })
       try {
@@ -845,47 +871,69 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
   )
 
   test(
-    "under a path prefix, ?baseUrl=/?iframeUrl= cannot send the invite to another host",
+    "a crafted link naming a host outside the allowlist contacts nobody and says so",
     async () => {
       upstream.reset()
-      const PREFIX = "/api/v2/live_handover/w/"
-      const STAGING = "https://qismo-stag2.qiscus.io"
+      for (const q of <Record<string, string>[]>[
+        { baseUrl: "https://someone.handlify.qiscus.io" },
+        { sdkBaseUrl: "https://evil.example" },
+        { iframeUrl: "https://evil.example" },
+        { scriptUrl: "https://evil.example/x.js", baseUrl: "https://evil.example" },
+      ]) {
+        const ctx = await newContext()
+        const contacted: string[] = []
+        let exchanges = 0
+        ctx.on("request", (r) => {
+          const u = new URL(r.url())
+          if (u.hostname.endsWith("evil.example") || u.hostname.endsWith("handlify.qiscus.io")) contacted.push(r.url())
+          if (u.pathname === "/api/v2/live_handover/exchange") exchanges++
+        })
+        const page = await ctx.newPage()
+        await page.goto(`${ORIGIN}/widget.html?${new URLSearchParams(q)}#t=synthetic-invite-A`)
+        await page.waitForFunction(() => document.getElementById("handover-status")!.textContent === "Konfigurasi widget tidak valid.", null, {
+          timeout: 10_000,
+        })
+        expect(contacted).toEqual([])
+        expect(exchanges).toBe(0)
+        expect(await page.locator("#qcw-iframe").count()).toBe(0)
+        await ctx.close()
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "region MY: the room logs in against sdkBaseUrl, and a resume stays on that host",
+    async () => {
+      upstream.reset()
+      const MY = "https://api-my.qiscus.com"
       const ctx = await newContext()
-      const foreign: string[] = []
-      const exchanges: string[] = []
+      await ctx.route(`${MY}/**`, fakeSdkApi)
+      const sdkHosts: string[] = []
       ctx.on("request", (r) => {
-        if (new URL(r.url()).origin === STAGING) foreign.push(r.url())
+        const u = new URL(r.url())
+        if (u.pathname.startsWith("/api/v2/sdk/")) sdkHosts.push(u.origin)
       })
-      await ctx.route(`${STAGING}/**`, (r) => r.abort())
-      // qismo-api on the dashboard host: the API at its root, this page under PREFIX
-      await ctx.route(`${HOST}/**`, async (r) => {
-        const url = new URL(r.request().url())
-        if (url.pathname === "/api/v2/live_handover/exchange") {
-          if (r.request().method() === "POST") exchanges.push(url.href)
-          return fakeQismo(r)
-        }
-        if (!url.pathname.startsWith(PREFIX)) return r.fulfill({ status: 404, body: "" })
-        const path = "/" + url.pathname.slice(PREFIX.length)
-        if (path === "/js/qiscus-sdk.3.2.12.js") return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
-        const res = await r.fetch({ url: ORIGIN + path + url.search })
-        await r.fulfill({ response: res })
-      })
-      const page = await ctx.newPage()
-      const q = `?baseUrl=${encodeURIComponent(STAGING)}&iframeUrl=${encodeURIComponent(STAGING)}`
-      await page.goto(`${HOST}${PREFIX}widget.html${q}#t=synthetic-invite-A`)
-      // settled either way: the room is mounted, or the exchange failed
-      await page.waitForFunction(
-        () => !!document.getElementById("qcw-iframe") || document.getElementById("handover-status")!.textContent !== "Menghubungkan…",
-        null,
-        { timeout: 15_000 },
-      )
-      expect(foreign).toEqual([])
-      expect(exchanges).toEqual([`${HOST}/api/v2/live_handover/exchange`])
-      const src = await page.evaluate(() => (document.getElementById("qcw-iframe") as HTMLIFrameElement | null)?.src)
-      expect(src).toStartWith(`${HOST}${PREFIX}iframes/v5/synthapp/live-handover-room?`)
-      // the room/push keep fetching through the proxy; don't fail on teardown
-      await ctx.unrouteAll({ behavior: "ignoreErrors" })
-      await ctx.close()
+      try {
+        const page = await ctx.newPage()
+        await page.goto(`${ORIGIN}/widget.html?sdkBaseUrl=${encodeURIComponent(MY)}#t=synthetic-invite-A`)
+        await page.frameLocator("#qcw-iframe").locator('body[data-synthetic-sdk="rendered"]').waitFor({ timeout: 15_000 })
+        const src = new URL((await page.locator("#qcw-iframe").getAttribute("src"))!, ORIGIN)
+        expect(src.searchParams.get("sdk_base_url")).toBe(MY)
+        await page.waitForFunction(() => !!localStorage.getItem("qiscus-handoff:session:v1"))
+        const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("qiscus-handoff:session:v1")!))
+        expect(stored.sdk).toBe(MY)
+
+        // resume: no invite, no query; the stored login keeps its own host
+        await page.goto(`${ORIGIN}/widget.html`)
+        await page.frameLocator("#qcw-iframe").locator('body[data-synthetic-sdk="rendered"]').waitFor({ timeout: 15_000 })
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!, ORIGIN).searchParams.get("resume")).toBe("1")
+        expect(sdkHosts.length).toBeGreaterThanOrEqual(3) // verify + room, then room again on resume
+        expect([...new Set(sdkHosts)]).toEqual([MY])
+      } finally {
+        await ctx.unrouteAll({ behavior: "ignoreErrors" })
+        await ctx.close()
+      }
     },
     60_000,
   )

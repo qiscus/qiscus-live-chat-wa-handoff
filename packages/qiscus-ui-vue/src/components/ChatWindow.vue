@@ -1,6 +1,6 @@
 <template lang="pug">
   div.qcw-chat-wrapper
-    div.qcw-main
+    div.qcw-main(@click.capture="onOmniFormLinkClick")
       svg-icon
 
       image-modal(:comment="imageModalContent"
@@ -69,6 +69,8 @@
       comment-list(
         v-else
         :core="core"
+        :omni-form-sending="omniFormSendingVisible ? omniForm.sendingSince : null"
+        :omni-form-sending-text="omniFormSendingText"
         :on-click-image="openImageModal"
         :repliedComment="repliedComment"
         :replyHandler="setReply"
@@ -103,6 +105,14 @@
         @assistant-changes="assistantChanges"
         @assistant-language="setLanguages")
 
+      omni-form-sheet(
+        :url="omniForm.url"
+        :return-focus-to="omniForm.opener"
+        :labels="omniFormSettings.labels"
+        :brand-color="core.UI.colors && core.UI.colors.bubleRightColor"
+        @submitted="onOmniFormSubmitted"
+        @close="onOmniFormClosed")
+
     //- Start of message info
     message-info(v-if="core.UI.isMessageInfoActive" :core="core")
 </template>
@@ -125,6 +135,20 @@ import { uploadFile } from '../lib/fileUploader';
 import AttachmentForm from './AttachmentForm';
 import MessageInfo from './MessageInfo';
 import AssistantResult from './ai-assistant/result';
+import OmniFormSheet from './OmniFormSheet';
+import {
+  omniFormAnswerIds,
+  omniFormConfig,
+  omniFormEmbedUrl,
+  omniFormLabel,
+} from '../lib/omniForm';
+
+/**
+ * After a submit, once the sheet closes, the "Sending form…" bubble stays at
+ * most this long: the tenant webhook can reject or fail, and then no answers
+ * ever arrive in the room.
+ */
+const OMNIFORM_SENDING_TIMEOUT_MS = 60000;
 
 export default {
   name: 'ChatWindow',
@@ -145,9 +169,18 @@ export default {
     MessageInfo,
     CommentListEmail,
     AssistantResult,
+    OmniFormSheet,
   },
   data() {
     return {
+      // OmniForm sheet + client-only "Sending form…" bubble (see onOmniFormLinkClick).
+      omniForm: {
+        url: null,
+        opener: null,
+        submitted: false,
+        sendingSince: null,
+        answersAtSubmit: [],
+      },
       repliedComment: null,
       imageModalContent: null,
       imageModalIsActive: false,
@@ -173,6 +206,24 @@ export default {
     };
   },
   computed: {
+    omniFormSettings() {
+      return omniFormConfig(this.core.UI);
+    },
+    omniFormSendingText() {
+      return omniFormLabel(this.omniFormSettings.labels, 'sending');
+    },
+    // Reads the room's comments array, so a pushed/spliced message re-runs it.
+    omniFormAnswerIdsNow() {
+      const room = this.core.selected;
+      return omniFormAnswerIds(room ? room.comments : []);
+    },
+    omniFormHasNewAnswer() {
+      const before = this.omniForm.answersAtSubmit;
+      return this.omniFormAnswerIdsNow.some(id => before.indexOf(id) === -1);
+    },
+    omniFormSendingVisible() {
+      return Boolean(this.omniForm.sendingSince) && !this.omniFormHasNewAnswer;
+    },
     showIsTypingStatus() {
       const self = this;
       if (this.core.isTypingStatus) {
@@ -230,6 +281,16 @@ export default {
     },
   },
   watch: {
+    omniFormSendingVisible(visible) {
+      if (!visible && this.omniForm.sendingSince) this.stopOmniFormSending();
+    },
+    // The sheet and its bubble belong to the room they were opened in.
+    'core.selected.id': function onRoomChanged() {
+      this.omniForm.url = null;
+      this.omniForm.opener = null;
+      this.omniForm.submitted = false;
+      this.stopOmniFormSending();
+    },
     'core.UI.config.showRepliedForm': {
       handler(newVal) {
         if (newVal !== null && !newVal) {
@@ -238,7 +299,64 @@ export default {
       },
     },
   },
+  beforeDestroy() {
+    this.stopOmniFormSending();
+  },
   methods: {
+    /**
+     * OmniForm: a click on a link to an allowed form origin's `/e/<token>`
+     * (bot `buttons` link, card button or a link in a text bubble: all are
+     * `<a href>`) opens the form in a sheet over the chat instead of a new
+     * tab. Every other link, a modified click (new tab/window), the switch
+     * off or an empty/invalid allowlist keeps the link's own behaviour.
+     */
+    onOmniFormLinkClick(event) {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target;
+      const link = target && target.closest ? target.closest('a[href]') : null;
+      if (!link) return;
+      const settings = omniFormConfig(this.core.UI);
+      if (!settings.enabled) return;
+      const url = omniFormEmbedUrl(link.href, settings.origins, window.location.origin);
+      if (!url) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.omniForm.opener = link;
+      this.omniForm.submitted = false;
+      this.omniForm.url = url;
+    },
+    onOmniFormSubmitted() {
+      this.omniForm.submitted = true;
+      this.omniForm.answersAtSubmit = this.omniFormAnswerIdsNow.slice();
+    },
+    /**
+     * "Sending form…" after a submit: once the sheet closes (the form's own
+     * auto close, the sheet's close button or overlay) after
+     * `omniform:submitted`, a client-only pending bubble of the visitor's
+     * stays at the bottom until an OmniForm answers message newer than the
+     * submit shows up in the room, or for at most OMNIFORM_SENDING_TIMEOUT_MS.
+     * The answers reach the room only after the tenant's webhook accepted them
+     * (omniform-be waits for its 2xx); this covers that gap. Nothing is sent,
+     * stored or retried.
+     */
+    onOmniFormClosed() {
+      this.omniForm.url = null;
+      if (!this.omniForm.submitted) return;
+      this.omniForm.submitted = false;
+      // Answers can land while the thank-you screen is still showing.
+      if (this.omniFormHasNewAnswer) return;
+      this.stopOmniFormSending();
+      this.omniForm.sendingSince = new Date();
+      this.omniFormSendingTimer = window.setTimeout(
+        () => this.stopOmniFormSending(),
+        OMNIFORM_SENDING_TIMEOUT_MS,
+      );
+    },
+    stopOmniFormSending() {
+      window.clearTimeout(this.omniFormSendingTimer);
+      this.omniForm.sendingSince = null;
+    },
     assistantChanges(value) {
       this.assistant.agentInput = value.input;
       this.assistant.chatHistory = value.history;

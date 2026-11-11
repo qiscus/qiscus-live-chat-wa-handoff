@@ -16,7 +16,9 @@
         - query params are read in the browser (URLSearchParams) instead of
           being interpolated server-side;
         - SDK_BASE_URL (Blade: Config app.sdk_base_url) is the constant below;
-        - title uses the default product name (no white-label config).
+        - title uses the default product name (no white-label config);
+        - the OmniForm embed settings (Blade: _omniform-config) are injected by
+          src/worker.ts at the omniform-config marker below, from env.
       Keep in sync with the Blade view when it changes.
     -->
     <link rel="stylesheet" href="../../../css/qiscus-sdk.3.2.12.css" />
@@ -160,6 +162,7 @@
         })();
     </script>
     <div id="qiscus-widget"></div>
+    <!-- omniform-config -->
     <script src="../../../js/qiscus-sdk.3.2.12.js"></script>
     <script src="../../../js/third-party/aes.js"></script>
     <script src="../../../js/push/handoff-room.js"></script>
@@ -178,7 +181,8 @@
          * read and the page behaves as before.
          */
         (function () {
-            // Blade: Config::get("app.sdk_base_url") — same value on stag2 and prod.
+            // Blade: Config::get("app.sdk_base_url") — same value on stag2 and prod
+            // (ID region). Other regions arrive as ?sdk_base_url= (see below).
             var SDK_BASE_URL = 'https://api3.qiscus.com';
             var room = window.HandoffRoom || null;
             var trusted = !!(room && room.trustedParent());
@@ -251,6 +255,20 @@
                 return;
             }
 
+            // The SDK host (region): a resume uses the stored login's own host,
+            // an invite ?sdk_base_url= when it is an allowed host
+            // (src/client/origins.ts, via handoff-room.js). Without that bundle
+            // only the ID host is accepted. Never a host from anywhere else.
+            var sdkParam = q.get('sdk_base_url');
+            qiscusBaseUrl = room
+                ? room.sdkOrigin(resumed)
+                : (!sdkParam || sdkParam === SDK_BASE_URL ? SDK_BASE_URL : null);
+            if (!qiscusBaseUrl) {
+                if (resumeMode) sendMessage({ event_name: 'qiscus:session-error', data: { reason: 'sdk_host' } });
+                showError();
+                return;
+            }
+
             bindMessageListener();
             attachCustomCss();
             initJoinRoom();
@@ -296,7 +314,7 @@
                                 // Identity verified upstream (verify_identity_token)
                                 // and the room loaded with that login: only now is
                                 // the login worth keeping for resume.
-                                if (!resumeMode && room) room.persistLogin(app_id, roomId, userData);
+                                if (!resumeMode && room) room.persistLogin(app_id, roomId, userData, qiscusBaseUrl);
                                 sendMessage({ event_name: 'qiscus:session-ready', data: { room_id: roomId } });
                             }, function () {
                                 if (resumeMode) {

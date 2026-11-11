@@ -183,8 +183,11 @@
   // adalah hasil /exchange (room_id, identity_token, name, avatar), bukan
   // input mentah dari browser -- AES-nya obfuskasi kosmetik seperti pola lama,
   // keamanannya sudah selesai di exchange (lihat kepala file).
+  // Region of the SDK the identity token belongs to (handoff page option
+  // sdkBaseUrl, already checked by the page). The room accepts only allowed
+  // hosts. Object.assign, not spread: the Svelte 3.17 parser is old.
   const handoverRoomParams = (result) =>
-    parseUrlParams({
+    parseUrlParams(Object.assign({
       app_id: result.app_code,
       room_id: encodeURIComponent(aes.encrypt(`${result.room_id}`, result.app_code).toString()),
       identity_token: encodeURIComponent(
@@ -196,7 +199,7 @@
         : "",
       staging,
       color_widget: convertHex(cfg().colorWidget, 100),
-    });
+    }, options && options.sdkBaseUrl ? { sdk_base_url: encodeURIComponent(options.sdkBaseUrl) } : {}));
 
   const openHandoverRoom = (result) => {
     if (document.getElementById("qcw-iframe")) return;

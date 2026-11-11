@@ -11,12 +11,15 @@
  * (QISCUS-SDK-APP-ID / -USER-ID / -TOKEN), so the upstream decides which user
  * the token belongs to — the page cannot register a token for anyone else.
  *
- * The host is a constant (the same one the hosted room uses); nothing from the
- * URL or the page can redirect these calls elsewhere.
+ * The host is the SDK host of the customer's own login (`StoredSession.sdk`,
+ * one of origins.ts SDK_ORIGINS; absent = the ID host), the same one the room
+ * logged in against. Nothing else can redirect these calls.
  */
-import type { SdkUser, StoredSession } from "./session"
+import { DEFAULT_SDK_ORIGIN, isSdkOrigin } from "./origins"
+import { type SdkUser, type StoredSession, sessionSdk } from "./session"
 
-export const SDK_BASE_URL = "https://api3.qiscus.com"
+/** The ID-region SDK host, the default when a login names none. */
+export const SDK_BASE_URL = DEFAULT_SDK_ORIGIN
 export const DEVICE_PLATFORM = "web"
 
 export interface DeviceTokenResult {
@@ -29,7 +32,7 @@ export interface DeviceTokenResult {
 // FCM registration tokens are ~150-200 chars of [A-Za-z0-9_:-].
 const TOKEN_RE = /^[A-Za-z0-9_:\-]{20,1024}$/
 
-type Creds = Pick<StoredSession, "appId" | "user">
+type Creds = Pick<StoredSession, "appId" | "user" | "sdk">
 
 async function call(
   fetchFn: typeof fetch,
@@ -38,8 +41,10 @@ async function call(
   deviceToken: string,
 ): Promise<DeviceTokenResult> {
   if (!TOKEN_RE.test(deviceToken)) return { ok: false, status: 0, error: "invalid-token" }
+  const sdk = sessionSdk(session)
+  if (!isSdkOrigin(sdk)) return { ok: false, status: 0, error: "invalid-sdk-host" }
   try {
-    const res = await fetchFn(`${SDK_BASE_URL}/api/v2/sdk/${path}`, {
+    const res = await fetchFn(`${sdk}/api/v2/sdk/${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -82,10 +87,16 @@ export interface VerifyResult {
  * consumed and an existing user's SDK token is not rotated, so the room's own
  * login is unaffected. The identity token lives ~120 s and is never stored.
  */
-export async function verifyIdentityToken(fetchFn: typeof fetch, appId: string, identityToken: string): Promise<VerifyResult> {
+export async function verifyIdentityToken(
+  fetchFn: typeof fetch,
+  appId: string,
+  identityToken: string,
+  sdk: string = DEFAULT_SDK_ORIGIN,
+): Promise<VerifyResult> {
   if (!identityToken || identityToken.length > 8192) return { ok: false, status: 0, error: "invalid-identity-token" }
+  if (!isSdkOrigin(sdk)) return { ok: false, status: 0, error: "invalid-sdk-host" }
   try {
-    const res = await fetchFn(`${SDK_BASE_URL}/api/v2/sdk/auth/verify_identity_token`, {
+    const res = await fetchFn(`${sdk}/api/v2/sdk/auth/verify_identity_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "QISCUS-SDK-APP-ID": appId },
       body: JSON.stringify({ identity_token: identityToken }),

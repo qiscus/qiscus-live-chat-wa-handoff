@@ -1,9 +1,9 @@
 /**
- * Top-level push + resume wiring for /widget.html, bundled as
- * /js/push/handoff-push.js and exposed as `window.HandoffPush`.
+ * Top-level push + resume wiring for /widget.html, bundled into
+ * /js/handoff-page.js (see page.ts, which drives it).
  *
- * widget.html calls:
- *   const push = HandoffPush.start({ iframeUrl })
+ * page.ts calls:
+ *   const push = start({ iframeUrl, sdkBaseUrl })
  *   invite (#t=) present -> push.beginInvite(); QismoFull mounts as before;
  *                           handoff-ready -> push.handoffReady();
  *                           handoff-error -> push.inviteFailed()
@@ -582,7 +582,7 @@ function observeExchange(onCapture: (c: ExchangeCapture) => void): void {
   } as typeof proto.send
 }
 
-export function start(opts: { iframeUrl: string }): HandoffPushApi {
+export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): HandoffPushApi {
   let resuming = false
   let resumeHandlers: { onReady(): void; onFailed(): void } | null = null
 
@@ -598,6 +598,7 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     loadConfig,
     fcm,
     swContext: { write: (ctx) => writeSwContext(indexedDB, ctx) },
+    sdkBaseUrl: opts.sdkBaseUrl,
     onState: (s) => ui.render(s),
     debug,
   })
@@ -744,14 +745,4 @@ export function start(opts: { iframeUrl: string }): HandoffPushApi {
     enable: () => ctl.enable(),
     disable: () => ctl.disable(),
   }
-}
-
-declare global {
-  interface Window {
-    HandoffPush?: { start: typeof start }
-  }
-}
-
-if (typeof window !== "undefined" && typeof document !== "undefined") {
-  window.HandoffPush = { start }
 }

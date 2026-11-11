@@ -413,7 +413,7 @@
                 comment-render(
                   :comment="comment"
                   :text="comment.message"
-                  v-if="!comment.isAttachment(comment.message) && comment.type=='text' && !isSticker && !isFlowResponse()"
+                  v-if="!comment.isAttachment(comment.message) && comment.type=='text' && !isSticker && !isFlowResponse() && !omniFormAnswer"
                   :class="{'comment-text__interactive': comment.extras.interactive}")
 
                 comment-order(:order="comment.extras.order" v-if="comment.extras.order && comment.extras.order.catalog_id")
@@ -422,6 +422,9 @@
                 template(v-if="isFlowResponse()")
                   comment-flow-response(:comment="comment", :core="core")
                 //- end of flow response bubble
+
+                //- OmniForm answers (nfm_reply name "omniform", posted by qismo-api)
+                comment-omni-form-answer(v-if="omniFormAnswer" :answer="omniFormAnswer" :attachments-label="omniFormAttachmentsLabel" :mask-values="!!(core && core.UI && core.UI.maskFlowResponse)")
 
               div(class="comment-text" v-if="comment.type == 'text' && isPreviousSessionMessageNotifier")
                 image-loader(v-if="comment.isAttachment(comment.message)"
@@ -515,6 +518,8 @@ import CommentBroadcastButton from "./CommentBroadcastButton.vue";
 import CommentFlowInteractive from "./CommentFlowInteractive.vue";
 import CommentCtaInteractive from "./CommentCtaInteractive.vue";
 import CommentRequestContact from "./CommentRequestContact.vue";
+import CommentOmniFormAnswer from './CommentOmniFormAnswer';
+import { omniFormConfig, omniFormLabel, parseOmniFormAnswer } from '../lib/omniForm';
 import {
   maskSystemEventAgentName,
   renderSystemEventHtml,
@@ -567,7 +572,8 @@ export default {
     CommentBroadcastButton,
     CommentFlowInteractive,
     CommentCtaInteractive,
-    CommentRequestContact
+    CommentRequestContact,
+    CommentOmniFormAnswer
   },
   props: [
     "comment",
@@ -593,6 +599,23 @@ export default {
   ],
   directives: { clickOutside },
   computed: {
+    // OmniForm answers carried by this message (see ../lib/omniForm.js), else
+    // null and the message shows as its plain-text fallback.
+    omniFormAnswer() {
+      if (!this.comment) return null;
+      const answer = parseOmniFormAnswer(this.comment.extras);
+      const interactive = (this.comment.extras || {}).interactive || {};
+      // Invalid structured data must not expose the raw answer/URLs as fallback.
+      if (!answer && this.core && this.core.UI && this.core.UI.maskFlowResponse &&
+          interactive.type === 'nfm_reply' && interactive.nfm_reply &&
+          interactive.nfm_reply.name === 'omniform') {
+        return { formName: '', fields: [{ label: '', value: '********' }], attachments: [] };
+      }
+      return answer;
+    },
+    omniFormAttachmentsLabel() {
+      return omniFormLabel(omniFormConfig(this.core && this.core.UI).labels, 'attachments');
+    },
     // Opt-in: rows of a WA interactive list become buttons that send a
     // `list_reply`. Off unless the host passes options.interactiveListReply.
     interactiveListReply() {
@@ -912,6 +935,9 @@ export default {
       return desc;
     },
     isMeFileImageAttachment() {
+      // The structured answer's fallback includes upload URLs, but the whole
+      // message is still a form reply, not a standalone image attachment.
+      if (this.omniFormAnswer) return false;
       const payload = this.comment.payload || {};
       // A caption also rides after the closing tag on a plain-text
       // `[file]url[/file] caption` send — that bubble keeps its background.

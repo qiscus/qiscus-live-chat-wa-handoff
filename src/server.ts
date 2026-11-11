@@ -12,13 +12,15 @@
  *   does, and a compressed response carries a weak ETag, as on Cloudflare;
  * - If-None-Match uses the weak comparison of RFC 9110 §13.1.2 and accepts a
  *   list, so revalidation still gets 304 when a proxy weakened the ETag;
- * - the public FCM config is read from the container env (same PUSH_ENV_KEYS
- *   the Alchemy deploy binds as plain_text).
+ * - the public FCM config and the OmniForm embed switches are read from the
+ *   container env (same PUSH_ENV_KEYS / OMNIFORM_ENV_KEYS the Alchemy deploy
+ *   binds as plain_text).
  */
 import { createHash } from "node:crypto"
 import { join, normalize, sep } from "node:path"
 import { brotliCompressSync, constants as zlib, gzipSync } from "node:zlib"
 import app from "./worker"
+import { OMNIFORM_ENV_KEYS } from "./omniform-config"
 import { PUSH_ENV_KEYS } from "./push/config"
 
 type Encoding = "br" | "gzip"
@@ -152,7 +154,7 @@ export function createHandler(options: ServerOptions = {}): (req: Request) => Pr
         (await serveAsset(new Request(input, init))) ?? new Response("Not found", { status: 404 }),
     },
   }
-  for (const key of PUSH_ENV_KEYS) {
+  for (const key of [...PUSH_ENV_KEYS, ...OMNIFORM_ENV_KEYS]) {
     const value = sourceEnv[key]?.trim()
     if (value) env[key] = value
   }

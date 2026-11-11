@@ -44,6 +44,17 @@
             .qcw-comment-container.qcw-comment--text.qcw-comment--cust
               .qcw-comment.comment--parent.comment--last
                 .qcw-comment__message(style="color: rgb(10, 10, 10); background: rgb(243, 245, 247); border-color: rgb(236, 236, 236);") {{ bubbleTypingText }}
+        //- Client-only OmniForm placeholder (see ChatWindow onOmniFormClosed): never a real message.
+        li(v-if="omniFormSending" id="omniform-sending" data-omniform-sending)
+          .parent--container.my--container
+            .qcw-comment-container.qcw-comment--text.comment--me
+              .qcw-comment.comment--me.comment--parent.comment--last
+                .qcw-comment__message(:style="omniFormSendingStyle")
+                  .comment-text
+                    span {{ omniFormSendingText }}
+                  span.qcw-comment__time {{ omniFormSendingTime }}
+                  div.qcw-comment__state.qcw-comment__state--sending
+                    icon(name="ic-load" class="ic-load__state" :fill="omniFormSendingStyle.color")
 
 </template>
 
@@ -56,7 +67,7 @@ import { scrollIntoElement, scrollIntoLastElement, scrollListToElement, sortComm
 export default {
   name: 'CommentList',
   components: { Icon, Loader, Comment },
-  props: ['core', 'onClickImage', 'onupdate', 'replyHandler'],
+  props: ['core', 'onClickImage', 'onupdate', 'replyHandler', 'omniFormSending', 'omniFormSendingText'],
   data() {
     return {
       isLoadingMore: false,
@@ -86,6 +97,20 @@ export default {
         return this.core.UI.bubbleData.text || 'Thinking ...';
       }
       return 'Thinking ...';
+    },
+    omniFormSendingStyle() {
+      const colors = this.core.UI.colors || {};
+      return {
+        background: colors.bubleRightColor,
+        borderColor: colors.bubleRightColor,
+        color: colors.bubleRightTextColor,
+      };
+    },
+    omniFormSendingTime() {
+      const at = this.omniFormSending;
+      if (!at || !at.getHours) return '';
+      const pad = n => (n < 10 ? `0${n}` : `${n}`);
+      return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
     },
     comments() {
       const { comments, participants, options } = this.core.selected;
@@ -138,6 +163,11 @@ export default {
     },
     stickerUrlRegex() {
       return /\b(?:https):\/\/[a-z0-9-+&@#/%?=~_|!:,.;]*[a-z0-9-+&@#/%=~_|]/i;
+    },
+  },
+  watch: {
+    omniFormSending(at) {
+      if (at && !this.isReading) this.$nextTick(() => scrollIntoLastElement(this.core));
     },
   },
   updated() {
