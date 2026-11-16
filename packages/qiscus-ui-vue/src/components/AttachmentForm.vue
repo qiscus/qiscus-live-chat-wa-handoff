@@ -2,8 +2,8 @@
   div(class="qcw-attachment-form" :style="style")
     div(class="qcw-attachment-form__header" :style="headerStyle")
       div(class="qcw-attachment-form__title")
-        h4 Preview
-        span(:style="subtitleStyle") Send to {{ displayName }}
+        h4 {{ $customerText('common.preview') }}
+        span(:style="subtitleStyle") {{ $customerText('common.sendTo', { name: displayName }) }}
       div(class="qcw-attachment-form__close-btn" @click="closeFormHandler")
         icon(name="ic-close" :style="iconStyle")
     label()
@@ -12,7 +12,7 @@
     div(class="qcw-attachment-form__action")
       input(class="qcw-attachment-form__caption-txt"
         ref="caption"
-        placeholder="Add your caption ..."
+        :placeholder="$customerText('common.caption')"
         @keydown.enter="tryUploadFile($event)"
         v-model="caption")
       i(class="send-button" @click="uploadFile")
@@ -29,7 +29,7 @@
     data() {
       return {
         thumbnail: '',
-        label: 'Browse',
+        label: '',
         file: null,
         caption: '',
         populated: false,
@@ -64,6 +64,7 @@
       },
     },
     created() {
+      this.label = this.$customerText('common.browse');
       this.focusInCaption();
     },
     methods: {
@@ -76,7 +77,7 @@
             file: event,
             thumbnail: fileReader.result,
           });
-          self.label = 'Change';
+          self.label = self.$customerText('common.change');
           self.populated = true;
         };
         fileReader.readAsDataURL(file);

@@ -1,12 +1,11 @@
 /**
  * Builds the forked front-end packages (see packages/UPSTREAM.md) and copies
  * the files the handoff page serves into public/:
- *   packages/qiscus-ui-vue -> public/js/qiscus-sdk.<v>.js(.map), public/css/qiscus-sdk.<v>.css
+ *   packages/qiscus-ui-vue -> public/js/qiscus-handoff.js(.map), public/css/qiscus-handoff.css
  *   packages/qismo-widget  -> public/js/qismo-full-v5.js(.map)
  *
  * Each package is built with its own unchanged scripts under the Node version in
- * packages/qiscus-ui-vue/.nvmrc, via fnm. Older qiscus-sdk.* files are removed
- * so public/ only ships the version the room page loads.
+ * packages/qiscus-ui-vue/.nvmrc, via fnm. Old qiscus-sdk.<v> files in public/js and public/css are removed.
  *
  *   bun run build:vendor
  */
@@ -33,9 +32,10 @@ async function run(cwd: string, args: string[]): Promise<void> {
   if ((await proc.exited) !== 0) throw new Error(`failed: ${cmd.join(" ")} in ${cwd}`)
 }
 
-async function copy(from: string, to: string): Promise<void> {
+async function copy(from: string, to: string, rename: [string, string][] = []): Promise<void> {
   if (!existsSync(from)) throw new Error(`missing build output: ${from}`)
-  await Bun.write(to, Bun.file(from))
+  if (rename.length === 0) await Bun.write(to, Bun.file(from))
+  else await Bun.write(to, rename.reduce((text, [a, b]) => text.replaceAll(a, b), await Bun.file(from).text()))
   console.log(`wrote ${to.replace(root, "")}`)
 }
 
@@ -53,18 +53,23 @@ export async function buildVendor(): Promise<void> {
   await run(widget, ["build"])
 
   const v = await sdkVersion()
+  // The room page loads fixed names (no version in the URL), so a new SDK version
+  // never needs an HTML edit. Every qiscus-sdk.<v>.* left over from older builds is removed.
   for (const dir of ["js", "css"]) {
     for (const name of readdirSync(join(publicDir, dir))) {
-      if (name.startsWith("qiscus-sdk.") && !name.startsWith(`qiscus-sdk.${v}.`)) {
+      if (name.startsWith("qiscus-sdk.")) {
         rmSync(join(publicDir, dir, name))
         console.log(`removed public/${dir}/${name}`)
       }
     }
   }
   const dist = join(ui, "dist/static")
-  await copy(join(dist, `js/qiscus-sdk.${v}.js`), join(publicDir, `js/qiscus-sdk.${v}.js`))
-  await copy(join(dist, `js/qiscus-sdk.${v}.js.map`), join(publicDir, `js/qiscus-sdk.${v}.js.map`))
-  await copy(join(dist, `css/qiscus-sdk.${v}.css`), join(publicDir, `css/qiscus-sdk.${v}.css`))
+  // webpack names its output by version, and the bundle and map point at each other
+  // by that name, so those references are rewritten while copying.
+  const renamed: [string, string][] = [[`qiscus-sdk.${v}.js`, "qiscus-handoff.js"]]
+  await copy(join(dist, `js/qiscus-sdk.${v}.js`), join(publicDir, "js/qiscus-handoff.js"), renamed)
+  await copy(join(dist, `js/qiscus-sdk.${v}.js.map`), join(publicDir, "js/qiscus-handoff.js.map"), renamed)
+  await copy(join(dist, `css/qiscus-sdk.${v}.css`), join(publicDir, "css/qiscus-handoff.css"))
 
   // qismo-widget's rollup config writes to ../public, i.e. packages/public.
   const out = join(packages, "public/js")

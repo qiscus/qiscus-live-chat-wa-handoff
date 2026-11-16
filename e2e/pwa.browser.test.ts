@@ -12,7 +12,7 @@
  *   - qismo.qiscus.com exchange and api3.qiscus.com SDK REST: in-test fakes
  *     that enforce single-use identity tokens, SDK-token auth and room
  *     membership, and record device-token registrations;
- *   - /js/qiscus-sdk.3.2.12.js inside the room: a tiny stub exposing the same
+ *   - /js/qiscus-handoff.js inside the room: a tiny stub exposing the same
  *     calls the room page makes (the real SDK needs a live Qiscus app + MQTT);
  *   - FCM token minting: window.__HANDOFF_PUSH_TEST__ seam (localhost only),
  *     because headless Chrome cannot obtain a real FCM/push-service token;
@@ -190,7 +190,8 @@ const FCM_SEAM = `window.__HANDOFF_PUSH_TEST__ = { fcm: { getToken: async () => 
 } } };`
 
 async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: boolean; roomList?: boolean; systemEvent?: boolean } = {}): Promise<BrowserContext> {
-  const ctx = await browser.newContext({ userAgent: opts.userAgent })
+  // Indonesian browser: the assertions below expect the Indonesian copy (English is the fallback).
+  const ctx = await browser.newContext({ userAgent: opts.userAgent, locale: "id-ID" })
   if (opts.grant) await ctx.grantPermissions(["notifications"], { origin: ORIGIN })
   await ctx.addInitScript(FCM_SEAM)
   // the SDK stub renders a message list like the real room (.qcw-comments .inner)
@@ -205,7 +206,7 @@ async function newContext(opts: { grant?: boolean; userAgent?: string; deny?: bo
   await ctx.route("https://qismo.qiscus.com/**", fakeQismo)
   await ctx.route("https://api3.qiscus.com/**", fakeSdkApi)
   await ctx.route("https://omnichannel.qiscus.com/**", (r) => r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM }))
-  await ctx.route(`${ORIGIN}/js/qiscus-sdk.3.2.12.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
+  await ctx.route(`${ORIGIN}/js/qiscus-handoff.js`, (r) => r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB }))
   return ctx
 }
 
@@ -215,7 +216,7 @@ const HOST = "https://handoff.example"
 async function onHttpsHost(opts: Parameters<typeof newContext>[0] = {}): Promise<BrowserContext> {
   const ctx = await newContext(opts)
   await ctx.route(`${HOST}/**`, async (r) => {
-    if (new URL(r.request().url()).pathname === "/js/qiscus-sdk.3.2.12.js")
+    if (new URL(r.request().url()).pathname === "/js/qiscus-handoff.js")
       return r.fulfill({ status: 200, contentType: "application/javascript", body: SDK_STUB })
     const res = await r.fetch({ url: r.request().url().replace(HOST, ORIGIN) })
     await r.fulfill({ response: res })
