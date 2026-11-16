@@ -37,19 +37,16 @@ describe("static page copy matches the catalog", () => {
   const en = MESSAGES.en as unknown as Record<string, string>
   const id = MESSAGES.id as unknown as Record<string, string>
 
-  test("widget.html keys exist in both catalogs and its EN/ID fallback dictionaries equal the catalogs", async () => {
-    const html = await read("widget.html")
-    const keys = [...html.matchAll(/text\("(page\.[a-z_]+)"\)/g)].map((m) => m[1]!)
+  test("every status key the hosted page shows exists in both catalogs", async () => {
+    // widget.html has no inline script (CSP script-src 'self'); page.ts shows
+    // its status copy through localizedText(LOCALE, `page.<key>`).
+    const page = await Bun.file(new URL("./page.ts", import.meta.url)).text()
+    const list = page.match(/MESSAGE_KEYS = \[([\s\S]*?)\] as const/)?.[1] ?? ""
+    const keys = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => `page.${m[1]}`)
     expect(keys.length).toBeGreaterThanOrEqual(10)
-    for (const key of keys) {
+    for (const key of [...keys, "page.connecting"]) {
       expect(en[key]).toBeString()
       expect(id[key]).toBeString()
-    }
-    const block = (lang: "en" | "id") => html.match(new RegExp(`\\n {8}${lang}: \\{([\\s\\S]*?)\\n {8}\\},`))![1]!
-    for (const [lang, catalog] of [["en", en], ["id", id]] as const) {
-      const entries = [...block(lang).matchAll(/"(page\.[a-z_]+)": "([^"]+)"/g)]
-      expect(entries.map((e) => e[1]).sort()).toEqual([...new Set(keys)].sort())
-      for (const [, key, value] of entries) expect(value).toBe(catalog[key!]!)
     }
   })
 

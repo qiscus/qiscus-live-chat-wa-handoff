@@ -102,6 +102,8 @@ describe("widget.html runs no inline script", () => {
     const page = await Bun.file(new URL("./client/page.ts", import.meta.url)).text()
     expect(page).toContain("readQueryParams: false,")
     expect(await Bun.file(pub("js/qismo-full-v5.js")).text()).toContain("readQueryParams")
+  })
+})
 
 describe("customer End chat bundle", () => {
   test("room and parent bundle implement the end-chat message contract", async () => {
@@ -130,16 +132,16 @@ describe("customer End chat bundle", () => {
 describe("multilingual static assets", () => {
   test("the handover room page uses an SDK build that contains the customer locale logic", async () => {
     const html = await Bun.file(pub("live-handover-room.html")).text()
-    const css = /href="(\/css\/qiscus-handoff\.css)"/.exec(html)?.[1]
-    const js = /src="(\/js\/qiscus-handoff\.js)"/.exec(html)?.[1]
+    const css = /href="(?:\.\.\/)*(css\/qiscus-handoff\.css)"/.exec(html)?.[1]
+    const js = /src="(?:\.\.\/)*(js\/qiscus-handoff\.js)"/.exec(html)?.[1]
     expect(css).toBeDefined()
     expect(js).toBeDefined()
     expect(html).toContain("customerLocale: 'auto'")
-    const sdk = await Bun.file(pub(js!.slice(1))).text()
+    const sdk = await Bun.file(pub(js!)).text()
     expect(sdk).toContain("customerLocale")
     expect(sdk).toContain("Akhiri chat")
     expect(sdk).toContain("Seret file ke sini untuk mengunggah")
-    expect(await Bun.file(pub(css!.slice(1))).exists()).toBe(true)
+    expect(await Bun.file(pub(css!)).exists()).toBe(true)
   })
 
   test("the manifest carries no Indonesian-only copy now that English is the fallback", () => {
@@ -148,16 +150,18 @@ describe("multilingual static assets", () => {
   })
 
   test("static pages default to English and only switch to Indonesian from browser languages", async () => {
-    // widget.html resolves its own locale (independent of the handoff-push bundle) from navigator.languages.
-    const widget = await Bun.file(pub("widget.html")).text()
-    expect(widget).toMatch(/<html lang="en">/)
-    expect(widget).toContain("navigator.languages")
+    // widget.html carries no inline script (CSP script-src 'self'); its copy and
+    // <html lang> come from the handoff-page bundle, which reads navigator.languages.
+    const page = await Bun.file(pub("js/handoff-page.js")).text()
+    expect(page).toContain("navigator.languages")
+    expect(page).toContain("Menghubungkan")
+    expect(page).toContain("Connecting")
     for (const page of ["offline.html", "live-handover-room.html"]) {
       const html = await Bun.file(pub(page)).text()
       expect(html).toMatch(/<html lang="en">/)
       expect(html).toContain("navigator.languages")
     }
-    const bundle = await Bun.file(pub("js/push/handoff-push.js")).text()
+    const bundle = await Bun.file(pub("js/handoff-page.js")).text()
     expect(bundle).toContain("navigator.languages")
   })
 })
