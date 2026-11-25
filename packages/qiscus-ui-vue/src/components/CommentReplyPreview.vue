@@ -1,7 +1,7 @@
 <template lang="pug">
   div(class="reply-wrapper reply-wrapper--preview")
     div
-      div(class="reply-sender") Replying to {{ comment.username_as }}
+      div(class="reply-sender") {{ $customerText('reply.replyingTo', { name: comment.username_as }) }}
       image-loader(v-if="comment.isAttachment(comment.message)"
         :comment="comment"
         :message="comment.message"
