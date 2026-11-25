@@ -694,10 +694,12 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
     offerPasteLink() {
       if (!isStandalone() || loadSession(window.localStorage, Date.now()).state === "valid") return false
       ui.showPasteForm((token, env) => {
-        // The Home Screen app starts without baseUrl/iframeUrl; carry the ones
-        // from the pasted link so the token is exchanged on its own environment.
+        // The Home Screen app starts without baseUrl/sdkBaseUrl/iframeUrl; carry
+        // the ones from the pasted link so the token is exchanged and verified on
+        // its own environment and region.
         const query = new URLSearchParams(location.search)
         if (env.baseUrl) query.set("baseUrl", env.baseUrl)
+        if (env.sdkBaseUrl) query.set("sdkBaseUrl", env.sdkBaseUrl)
         if (env.iframeUrl) query.set("iframeUrl", env.iframeUrl)
         const search = query.toString() ? `?${query.toString()}` : ""
         // Same transport as the normal invite: the fragment, which QismoFull

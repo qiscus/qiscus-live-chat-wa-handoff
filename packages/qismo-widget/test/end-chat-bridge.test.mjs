@@ -175,8 +175,21 @@ const pages = new URL("../../../public/", import.meta.url);
 const read = (name) => readFileSync(new URL(name, pages), "utf8");
 
 test("only live-handover-room opts in; the hosted page never gets the control", () => {
-  assert.match(read("live-handover-room.html"), /customerEndChat:\s*true/);
+  assert.match(read("live-handover-room.html"), /customerEndChat:\s*!resumeMode/);
   assert.doesNotMatch(read("widget.html"), /customerEndChat:/);
+});
+
+// The resume room (refresh, notification click, Home Screen) is mounted by the
+// handoff page, not FullWidget: no bridge and no invite token there, and the
+// close endpoint takes only the token. The control must not be offered.
+test("the control is off in a resume room and on in the invite room", () => {
+  const room = read("live-handover-room.html");
+  assert.match(room, /resumeMode\s*=\s*q\.get\('resume'\)\s*===\s*'1'/);
+  assert.doesNotMatch(room, /customerEndChat:\s*true/);
+  // same flag, evaluated for both modes
+  const flag = (resumeMode) => new Function("resumeMode", "return " + /customerEndChat:\s*([^,\n]+),/.exec(room)[1])(resumeMode);
+  assert.equal(flag(true), false);
+  assert.equal(flag(false), true);
 });
 
 test("the room accepts the close result only from its parent window", () => {

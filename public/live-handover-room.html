@@ -369,7 +369,12 @@
                         interactiveListReply: true,
                         // Shows the "End chat" control in the header (qiscus-sdk
                         // 3.2.13, opt-in; no other widget page sets this).
-                        customerEndChat: true,
+                        // Not on a resume (refresh, notification click, Home
+                        // Screen): there the room is mounted by the handoff page
+                        // (mountResumeRoom), which has no invite token and no
+                        // end-chat bridge, and the close endpoint takes only the
+                        // invite token, so the control could only ever fail.
+                        customerEndChat: !resumeMode,
                         customerLocale: 'auto',
                         customerEndChatCallback: requestEndChat,
                         loginSuccessCallback: function (userData) {

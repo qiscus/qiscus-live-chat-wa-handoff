@@ -114,7 +114,11 @@ describe("customer End chat bundle", () => {
 
     expect(room.includes("qiscus-handoff.js")).toBe(true)
     expect(room.includes("qiscus-handoff.css")).toBe(true)
-    expect(room.includes("customerEndChat: true")).toBe(true)
+    // Shown for the invite room only. A resume (?resume=1) is mounted by the
+    // handoff page, which has no invite token and no end-chat bridge.
+    expect(room.includes("customerEndChat: !resumeMode")).toBe(true)
+    expect(room.includes("customerEndChat: true")).toBe(false)
+    expect(room.includes("resumeMode = q.get('resume') === '1'")).toBe(true)
     expect(room.includes("customerLocale: 'auto'")).toBe(true)
     expect(room.includes("END_CHAT_TIMEOUT_MS = 15000")).toBe(true)
     expect(room.includes("qiscus:customer-end-chat-result")).toBe(true)

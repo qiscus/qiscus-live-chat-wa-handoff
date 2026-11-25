@@ -938,4 +938,32 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     },
     60_000,
   )
+
+  test(
+    "End chat control: offered in the invite room, not after a resume (no invite token to close with there)",
+    async () => {
+      upstream.reset()
+      const ctx = await newContext()
+      try {
+        const page = await ctx.newPage()
+        const roomFrame = () => page.frames().find((f) => /live-handover-room/.test(f.url()))!
+        const endChatOption = () => roomFrame().evaluate(() => (window as any).QiscusSDK.core.cfg.options.customerEndChat)
+
+        await page.goto(invite("synthetic-invite-A"))
+        await page.frameLocator("#qcw-iframe").locator('body[data-synthetic-sdk="rendered"]').waitFor({ timeout: 15_000 })
+        expect(new URL(roomFrame().url()).searchParams.get("resume")).toBeNull()
+        expect(await endChatOption()).toBe(true)
+
+        // resume: the page mounts the room itself (mountResumeRoom), no bridge
+        await page.goto(`${ORIGIN}/widget.html?source=notification`)
+        await page.frameLocator("#qcw-iframe").locator('body[data-synthetic-sdk="rendered"]').waitFor({ timeout: 15_000 })
+        expect(new URL(roomFrame().url()).searchParams.get("resume")).toBe("1")
+        expect(await endChatOption()).toBe(false)
+      } finally {
+        await ctx.unrouteAll({ behavior: "ignoreErrors" })
+        await ctx.close()
+      }
+    },
+    60_000,
+  )
 })
