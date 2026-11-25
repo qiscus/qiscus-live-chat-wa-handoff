@@ -149,6 +149,6 @@ test('room page: the OmniForm config marker precedes the SDK bundle', () => {
   const root = path.resolve(__dirname, '../../..');
   const src = fs.readFileSync(path.join(root, 'public/live-handover-room.html'), 'utf8');
   const marker = src.indexOf('<!-- omniform-config -->');
-  const bundle = src.indexOf('<script src="../../../js/qiscus-sdk.3.2.12.js"></script>');
+  const bundle = src.indexOf('<script src="../../../js/qiscus-handoff.js"></script>');
   assert.ok(marker > -1 && bundle > marker, 'config must precede the bundle');
 });

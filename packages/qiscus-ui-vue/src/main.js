@@ -8,6 +8,7 @@ import HttpClient from './lib/aiAssistant';
 import AdsTracker from './lib/adsTracker';
 import QENV from './lib/qenv';
 import { maskSystemEventAgentName } from './helpers/systemEventMask';
+import { customerText, getCustomerLocale } from './lib/customerLocale';
 
 const aiAssistant = new HttpClient();
 const adsTracker = new AdsTracker();
@@ -30,9 +31,23 @@ Vue.use(Toasted, {
 });
 Vue.config.productionTip = false;
 Vue.prototype.$core = QiscusCore;
+Vue.prototype.$customerText = function customerTextForWidget(key, values) {
+  const options = this.$core && this.$core.options;
+  const browserLanguages = typeof navigator !== 'undefined'
+    ? (navigator.languages && navigator.languages.length ? navigator.languages : navigator.language)
+    : '';
+  return customerText(key, options && options.customerLocale, browserLanguages, values);
+};
 
 function renderSDK() {
   /* eslint-disable no-new */
+  const options = QiscusCore.options || {};
+  if (options.customerLocale === 'auto' && typeof document !== 'undefined') {
+    const browserLanguages = typeof navigator !== 'undefined'
+      ? (navigator.languages && navigator.languages.length ? navigator.languages : navigator.language)
+      : '';
+    document.documentElement.lang = getCustomerLocale('auto', browserLanguages);
+  }
   new Vue({
     render(h) {
       return h(QiscusWidget);

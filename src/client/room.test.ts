@@ -1,6 +1,6 @@
 // SYNTHETIC: fake windows/storage; invented app codes, users and invite tokens.
 import { describe, expect, test } from "bun:test"
-import { parseInviteLink } from "./inviteLink"
+import { parseInviteEnv, parseInviteLink } from "./inviteLink"
 import { persistLogin, resumeSession, trustedParent } from "./room"
 import { SESSION_KEY } from "./session"
 import { MemoryStorage } from "./testing"
@@ -82,5 +82,59 @@ describe("parseInviteLink (synthetic tokens)", () => {
     ]) {
       expect(parseInviteLink(bad, ORIGIN)).toBeNull()
     }
+  })
+})
+
+describe("parseInviteEnv (environment carried by a pasted widget link)", () => {
+  const T = "eyJhbG...-abc"
+  test("keeps baseUrl and iframeUrl from this page's link as origins", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://qismo-stag2.qiscus.io/x")}&iframeUrl=${encodeURIComponent(ORIGIN)}#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({ baseUrl: "https://qismo-stag2.qiscus.io", iframeUrl: ORIGIN })
+  })
+  test("drops hosts that fromQuery would refuse", () => {
+    const link = `${ORIGIN}/widget.html?baseUrl=https%3A%2F%2Fevil.example&iframeUrl=https%3A%2F%2Fevil.example#t=${T}`
+    expect(parseInviteEnv(link, ORIGIN)).toEqual({})
+    expect(parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(ORIGIN)}#t=${T}`, ORIGIN)).toEqual({})
+  })
+  test("carries sdkBaseUrl (region) from this page's link: ID, MY, and none", () => {
+    const MY = "https://api-my.qiscus.com"
+    const ID = "https://api3.qiscus.com"
+    const link = (q: string) => `${ORIGIN}/widget.html${q}#t=${T}`
+    expect(parseInviteEnv(link(`?sdkBaseUrl=${encodeURIComponent(MY)}`), ORIGIN)).toEqual({ sdkBaseUrl: MY })
+    expect(parseInviteEnv(link(`?sdkBaseUrl=${encodeURIComponent(MY + "/api/v2")}`), ORIGIN)).toEqual({ sdkBaseUrl: MY }) // origin only
+    expect(parseInviteEnv(link(`?sdkBaseUrl=${encodeURIComponent(ID)}`), ORIGIN)).toEqual({ sdkBaseUrl: ID })
+    expect(parseInviteEnv(link("?source=pwa"), ORIGIN)).toEqual({}) // not carried -> controller default
+    expect(parseInviteEnv(link("?sdkBaseUrl="), ORIGIN)).toEqual({})
+    // all three together, as qismo-api builds the link for region MY
+    const all = `?baseUrl=${encodeURIComponent("https://omnichannel-my.qiscus.com")}&sdkBaseUrl=${encodeURIComponent(MY)}&iframeUrl=${encodeURIComponent(ORIGIN)}`
+    expect(parseInviteEnv(link(all), ORIGIN)).toEqual({ baseUrl: "https://omnichannel-my.qiscus.com", sdkBaseUrl: MY, iframeUrl: ORIGIN })
+  })
+  test("drops an sdkBaseUrl that origins.ts would refuse", () => {
+    for (const bad of [
+      "https://evil.example",
+      "https://api4.qiscus.com", // *.qiscus.com is not an SDK host
+      "https://evil.qiscus.io",
+      "http://api3.qiscus.com", // not https
+      "https://user:pw@api3.qiscus.com",
+      "https://api3.qiscus.com.evil.example",
+      "javascript:alert(1)",
+      "https://qismo.qiscus.com", // an API host is not an SDK host
+    ])
+      expect(parseInviteEnv(`${ORIGIN}/widget.html?sdkBaseUrl=${encodeURIComponent(bad)}#t=${T}`, ORIGIN)).toEqual({})
+    // a refused value does not take the allowed ones down with it
+    expect(
+      parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://qismo.qiscus.com")}&sdkBaseUrl=https%3A%2F%2Fevil.example#t=${T}`, ORIGIN),
+    ).toEqual({ baseUrl: "https://qismo.qiscus.com" })
+  })
+  test("baseUrl / iframeUrl use the exact lists, not *.qiscus.com / *.qiscus.io", () => {
+    for (const bad of ["https://evil.qiscus.com", "https://x.qiscus.io", "https://qismo-stag.qiscus.io.evil.example"])
+      expect(parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent(bad)}&iframeUrl=${encodeURIComponent(bad)}#t=${T}`, ORIGIN)).toEqual({})
+    expect(parseInviteEnv(`${ORIGIN}/widget.html?baseUrl=${encodeURIComponent("https://multichannel-api.qiscus.com")}#t=${T}`, ORIGIN)).toEqual({
+      baseUrl: "https://multichannel-api.qiscus.com",
+    })
+  })
+  test("redirector links and junk carry nothing", () => {
+    expect(parseInviteEnv(`https://qismo.qiscus.com/c/${T}`, ORIGIN)).toEqual({})
+    expect(parseInviteEnv("not a url", ORIGIN)).toEqual({})
   })
 })

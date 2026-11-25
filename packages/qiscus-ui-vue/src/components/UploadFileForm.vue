@@ -3,7 +3,7 @@
     .backdrop(@click="handleClose(false)")
     .content
       header
-        h3 Preview
+        h3 {{ $customerText('common.preview') }}
         .form-icon(@click="handleClose(false)")
           icon(name="ic-close" :fill="iconStyle")
       section
@@ -16,7 +16,7 @@
               icon(name="ic-excel-file" v-else-if="selected.name.includes('xls')" style="width: 100px; height: 100px;")
               icon(name="ic-ppt-file" v-else-if="selected.name.includes('ppt')" style="width: 100px; height: 100px;")
               icon(name="ic-doc-file" v-else style="width: 100px; height: 100px;")
-              .info-file No Preview available
+              .info-file {{ $customerText('common.noPreview') }}
               span(v-text="`${selected.size} - ${selected.ext}`")
           //- .comment-form
           //-   input(type="text" placeholder="Add caption.." v-model="caption" ref="inputUploadCaption")
@@ -37,7 +37,7 @@
           id="input-upload-caption"
           row="1"
           resize="none"
-          placeholder="Add caption.."
+          :placeholder="$customerText('common.captionShort')"
           v-model="caption"
           @keydown.enter="onSubmit($event)"
           ref="inputUploadCaption"
@@ -96,7 +96,7 @@ export default {
   },
   computed: {
     displayName() {
-      return `Send to ${this.$core.selected.name}`;
+      return this.$customerText('common.sendTo', { name: this.$core.selected.name });
     },
     iconStyle() {
       return {

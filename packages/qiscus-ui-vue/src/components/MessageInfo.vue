@@ -1,7 +1,7 @@
 <template lang="pug">
   div(class="qcw-message-info")
     div(class="qcw-message-info__header")
-      span Message Info
+      span {{ $customerText('message.info') }}
       span(@click="closeMessageInfo")
         icon(name="ic-close")
 
@@ -18,7 +18,7 @@
 
     div(class="qcw-message-info__info")
       strong.qcw-message-info__info-header.read
-        span Read By
+        span {{ $customerText('message.readBy') }}
         icon(name="ic-double-check")
 
       ul
@@ -28,7 +28,7 @@
             strong {{ r.user.username }}
             small {{ new Date(r.time).toLocaleString() }}
       strong.qcw-message-info__info-header.delivered
-        span Delivered To
+        span {{ $customerText('message.deliveredTo') }}
         icon(name="ic-double-check")
       ul
         li(v-for="d in delivered")

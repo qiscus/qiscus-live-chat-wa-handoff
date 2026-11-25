@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="id">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -17,8 +17,25 @@
   </head>
   <body>
     <div>
-      <p>Anda sedang offline. Periksa koneksi internet, lalu coba lagi.</p>
-      <button type="button" onclick="location.reload()">Coba lagi</button>
+      <p id="offline-message">You're offline. Check your internet connection, then try again.</p>
+      <button id="offline-retry" type="button" onclick="location.reload()">Try again</button>
     </div>
+    <script>
+      (function () {
+        var languages = navigator.languages && navigator.languages.length
+          ? navigator.languages
+          : [navigator.language || ""];
+        var locale = "en";
+        for (var i = 0; i < languages.length; i += 1) {
+          if (/^id(?:[-_]|$)/i.test(languages[i])) { locale = "id"; break; }
+          if (/^en(?:[-_]|$)/i.test(languages[i])) { locale = "en"; break; }
+        }
+        document.documentElement.lang = locale;
+        if (locale === "id") {
+          document.getElementById("offline-message").textContent = "Anda sedang offline. Periksa koneksi internet, lalu coba lagi.";
+          document.getElementById("offline-retry").textContent = "Coba lagi";
+        }
+      })();
+    </script>
   </body>
 </html>
