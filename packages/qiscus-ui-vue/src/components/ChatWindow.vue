@@ -103,7 +103,15 @@
         @assistant-apply="assistantApply"
         @assistant-enabled="assistantShowStatus"
         @assistant-changes="assistantChanges"
-        @assistant-language="setLanguages")
+        @assistant-language="setLanguages"
+        @open-location-picker="openLocationPicker")
+
+      location-picker-sheet(
+        v-if="locationPicker.open"
+        :config="shareLocationConfig"
+        :brand-color="core.UI.colors && core.UI.colors.bubleRightColor"
+        @send="sendLocation"
+        @close="closeLocationPicker")
 
       omni-form-sheet(
         :url="omniForm.url"
@@ -136,6 +144,8 @@ import AttachmentForm from './AttachmentForm';
 import MessageInfo from './MessageInfo';
 import AssistantResult from './ai-assistant/result';
 import OmniFormSheet from './OmniFormSheet';
+import LocationPickerSheet from './LocationPickerSheet';
+import { LOCATION_MESSAGE_TEXT, LOCATION_MESSAGE_TYPE } from '../lib/shareLocation';
 import {
   omniFormAnswerIds,
   omniFormConfig,
@@ -170,6 +180,7 @@ export default {
     CommentListEmail,
     AssistantResult,
     OmniFormSheet,
+    LocationPickerSheet,
   },
   data() {
     return {
@@ -180,6 +191,11 @@ export default {
         submitted: false,
         sendingSince: null,
         answersAtSubmit: [],
+      },
+      // Share-location picker; `opener` gets focus back when it closes.
+      locationPicker: {
+        open: false,
+        opener: null,
       },
       repliedComment: null,
       imageModalContent: null,
@@ -206,6 +222,10 @@ export default {
     };
   },
   computed: {
+    shareLocationConfig() {
+      const state = this.core.UI && this.core.UI.shareLocation;
+      return (state && state.config) || null;
+    },
     omniFormSettings() {
       return omniFormConfig(this.core.UI);
     },
@@ -286,6 +306,7 @@ export default {
     },
     // The sheet and its bubble belong to the room they were opened in.
     'core.selected.id': function onRoomChanged() {
+      this.closeLocationPicker();
       this.omniForm.url = null;
       this.omniForm.opener = null;
       this.omniForm.submitted = false;
@@ -303,6 +324,55 @@ export default {
     this.stopOmniFormSending();
   },
   methods: {
+    openLocationPicker(opener) {
+      if (!this.shareLocationConfig || !this.shareLocationConfig.enabled) return;
+      this.locationPicker.opener = opener || null;
+      this.locationPicker.open = true;
+    },
+    closeLocationPicker() {
+      if (!this.locationPicker.open) return;
+      const opener = this.locationPicker.opener;
+      this.locationPicker.open = false;
+      this.locationPicker.opener = null;
+      if (opener && opener.isConnected && opener.focus) opener.focus({ preventScroll: true });
+    },
+    /**
+     * Sends the picked point as a `location` comment (CONTRACT: text
+     * "Sent Location", payload {latitude, longitude, name, address, map_url,
+     * accuracy}). Like a text message, sdk-core adds the pending bubble at
+     * once and marks it failed (with "Resend") when the post fails, so the
+     * sheet closes as soon as the comment is handed over.
+     */
+    sendLocation(payload) {
+      const room = this.core.selected;
+      if (!room) return Promise.resolve();
+      const topicId = room.id;
+      const nanotimestamp = window.performance.now() + window.performance.timeOrigin;
+      const uniqueId = `${topicId}_${nanotimestamp}`;
+      const extras = this.core.UI.alternateUser
+        ? { alternate_user: this.core.UI.alternateUser }
+        : null;
+      this.closeLocationPicker();
+      const sending = this.core
+        .sendComment(
+          topicId,
+          LOCATION_MESSAGE_TEXT,
+          uniqueId,
+          LOCATION_MESSAGE_TYPE,
+          JSON.stringify(payload),
+          extras,
+        )
+        .then((res) => {
+          scrollIntoLastElement(this.core);
+          const callback = this.core.options && this.core.options.sentMessageCallback;
+          if (typeof callback === 'function') callback(res);
+        })
+        .catch(() => {
+          // The bubble already shows "Message failed to send. Resend".
+        });
+      this.$nextTick(() => scrollIntoLastElement(this.core));
+      return sending;
+    },
     /**
      * OmniForm: a click on a link to an allowed form origin's `/e/<token>`
      * (bot `buttons` link, card button or a link in a text bubble: all are

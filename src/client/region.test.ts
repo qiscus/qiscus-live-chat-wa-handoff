@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import { DEFAULT_SDK_ORIGIN, pickApiOrigin, pickIframeUrl, pickSdkOrigin } from "./origins"
 import { resolveEnv } from "./page"
-import { roomSdkOrigin } from "./room"
+import { persistLogin, roomApiOrigin, roomSdkOrigin } from "./room"
 import { removeDeviceToken, setDeviceToken, verifyIdentityToken } from "./sdkDeviceToken"
 import { SESSION_KEY, loadSession, saveSession } from "./session"
 
@@ -120,6 +120,41 @@ describe("the SDK host follows the login", () => {
     expect(roomSdkOrigin(`?sdk_base_url=${encodeURIComponent(MY)}`, null, LIVE)).toBe(MY)
     expect(roomSdkOrigin("?app_id=app", null, LIVE)).toBe(DEFAULT_SDK_ORIGIN)
     expect(roomSdkOrigin("?sdk_base_url=https%3A%2F%2Fevil.example", null, LIVE)).toBeNull()
+  })
+
+  test("share location: the room reads its config from the exchange's qismo host (?base_url= / stored api)", () => {
+    const stag4 = "https://qismo-stag4.qiscus.io"
+    const myApi = "https://omnichannel-my.qiscus.com"
+    expect(roomApiOrigin(`?base_url=${encodeURIComponent(stag4)}`, null, LIVE)).toBe(stag4)
+    expect(roomApiOrigin(`?base_url=${encodeURIComponent(myApi + "/x?y=1")}`, null, LIVE)).toBe(myApi)
+    // absent / foreign / non-http: no config host (menu stays hidden), never a default
+    expect(roomApiOrigin("?app_id=app", null, LIVE)).toBeNull()
+    expect(roomApiOrigin("?base_url=https%3A%2F%2Fevil.example", null, LIVE)).toBeNull()
+    expect(roomApiOrigin("?base_url=https%3A%2F%2Fqismo.qiscus.com.evil.example", null, LIVE)).toBeNull()
+    expect(roomApiOrigin("?base_url=javascript%3Aalert(1)", null, LIVE)).toBeNull()
+    // resume: only the stored host, never the query
+    const resumed = { v: 1 as const, appId: "app", roomId: "1", user, api: stag4, savedAt: 1, expiresAt: 2 }
+    expect(roomApiOrigin(`?resume=1&base_url=${encodeURIComponent(myApi)}`, resumed, LIVE)).toBe(stag4)
+    const { api: _drop, ...older } = resumed
+    expect(roomApiOrigin(`?resume=1&base_url=${encodeURIComponent(myApi)}`, older, LIVE)).toBeNull()
+  })
+
+  test("share location: a session keeps the qismo host; a foreign one is dropped", () => {
+    const s = memory()
+    saveSession(s, { appId: "app", roomId: "1", user, api: "https://qismo-stag2.qiscus.io" }, 1000)
+    expect(loadSession(s, 1001)).toMatchObject({ state: "valid", session: { api: "https://qismo-stag2.qiscus.io" } })
+    s.setItem(SESSION_KEY, JSON.stringify({ ...JSON.parse(s.getItem(SESSION_KEY)!), api: "https://evil.example" }))
+    expect(loadSession(s, 1001).state).toBe("none")
+    expect(() => saveSession(s, { appId: "app", roomId: "1", user, api: "https://evil.example" }, 1000)).toThrow()
+    saveSession(s, { appId: "app", roomId: "1", user }, 1000)
+    expect(JSON.parse(s.getItem(SESSION_KEY)!).api).toBeUndefined()
+  })
+
+  test("share location: the room stores the qismo host with the login", () => {
+    const s = memory()
+    const w = { location: { origin: LIVE }, parent: { location: { origin: LIVE } } } as unknown as Window
+    expect(persistLogin(w, s, "app", "1", { user }, 1000, DEFAULT_SDK_ORIGIN, "https://qismo.qiscus.com")).toBe(true)
+    expect(JSON.parse(s.getItem(SESSION_KEY)!).api).toBe("https://qismo.qiscus.com")
   })
 
   test("push registration goes to the login's own SDK host", async () => {

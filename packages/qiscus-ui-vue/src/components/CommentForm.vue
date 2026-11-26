@@ -30,6 +30,16 @@
             label
               input(class="uploader__input" name="file_image" type="file" accept="image/*" multiple @change="handleImageData" ref="inputImage")
               icon(name="ic-new-image-attachment" :fill="core.UI.colors.formMessageIconColor")
+          //- Share location: only when the page loaded an enabled config
+          //- (customer widget, see App.vue `shareLocation`).
+          span(class='qcw-icon' v-if="canShareLocation")
+            button.qcw-location-trigger(
+              type="button"
+              aria-label="Share location"
+              title="Location"
+              data-location-trigger
+              @click="openLocationPicker($event)")
+              icon(name="ic-new-location" :fill="core.UI.colors.formMessageIconColor")
           ads-tracker-toggle(:core="core" @show="showAdsConverter = true")
           assistant-menu(v-if="isAssistant" :core="core" :menu="currentMenu" @assistant-menu="assistantMenuChange" :langs="languages" @assistant-language="setLanguages" :assistant-result="assistantResult")
           div(id="quick-reply")
@@ -240,6 +250,11 @@ export default {
     }
   },
   computed: {
+    canShareLocation() {
+      if (this.isEmailMode) return false;
+      const state = this.core.UI && this.core.UI.shareLocation;
+      return !!(state && state.config && state.config.enabled);
+    },
     sendBtnStatus() {
       return this.commentInput.length > 0
         ? this.core.UI.colors.formMessageIconHoverColor
@@ -295,6 +310,9 @@ export default {
     },
   },
   methods: {
+    openLocationPicker(event) {
+      this.$emit('open-location-picker', event && event.currentTarget);
+    },
     async assistantMenuChange(value) {
       const filtered = this.core.selected.comments.filter(
         el => el.type === 'text',
@@ -1028,6 +1046,18 @@ export default {
     display none
 
   &.qcw-icon:hover svg.qc-icon
+    fill $green
+
+.qcw-location-trigger
+  display flex
+  padding 0
+  border 0
+  background transparent
+  cursor pointer
+  &:focus-visible
+    outline 2px solid #01416c
+    border-radius 4px
+  &:hover svg.qc-icon
     fill $green
 
 .qcw-upload-toast

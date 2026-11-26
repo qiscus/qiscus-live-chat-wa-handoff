@@ -766,6 +766,10 @@
     if (qismoConfig.isChannelWidgetEnabled)
       params += `&is_channel_widget_enable=${qismoConfig.isChannelWidgetEnabled}`;
     let iframeSource = `${qismoConfig.qismoIframeUrl}/iframes/v5/${appId}/multichannel-widget/${options.channel_id}${params}`;
+    // Share location: the chat page asks for the visitor's position, which a
+    // cross-origin iframe may only do when the embedder delegates it. Set
+    // before src so the first navigation already carries the permission.
+    widgetIframe.setAttribute("allow", "geolocation");
     widgetIframe.setAttribute("src", iframeSource);
     widgetIframe.setAttribute("id", "qcw-iframe");
     widgetIframe.setAttribute("style", "display: none");

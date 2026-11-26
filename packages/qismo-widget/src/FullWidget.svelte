@@ -186,6 +186,9 @@
   // Region of the SDK the identity token belongs to (handoff page option
   // sdkBaseUrl, already checked by the page). The room accepts only allowed
   // hosts. Object.assign, not spread: the Svelte 3.17 parser is old.
+  // base_url: the qismo-api host this exchange went to; the room loads the
+  // app's share-location config from it (src/client/room.ts roomApiOrigin
+  // re-checks it against origins.ts API_ORIGINS).
   const handoverRoomParams = (result) =>
     parseUrlParams(Object.assign({
       app_id: result.app_code,
@@ -199,12 +202,15 @@
         : "",
       staging,
       color_widget: convertHex(cfg().colorWidget, 100),
-    }, options && options.sdkBaseUrl ? { sdk_base_url: encodeURIComponent(options.sdkBaseUrl) } : {}));
+    }, cfg().qismoBaseUrl ? { base_url: encodeURIComponent(cfg().qismoBaseUrl) } : {},
+      options && options.sdkBaseUrl ? { sdk_base_url: encodeURIComponent(options.sdkBaseUrl) } : {}));
 
   const openHandoverRoom = (result) => {
     if (document.getElementById("qcw-iframe")) return;
     el = document.createElement("iframe");
     el.id = "qcw-iframe";
+    // Share location: delegate geolocation to the chat page (cross-origin).
+    el.setAttribute("allow", "geolocation");
     el.src = `${cfg().qismoIframeUrl}/iframes/v5/${result.app_code}/live-handover-room${handoverRoomParams(result)}`;
     document.body.appendChild(el);
     notify("qiscus:handoff-ready", {
@@ -263,6 +269,8 @@
     if (document.getElementById("qcw-iframe")) return;
     el = document.createElement("iframe");
     el.id = "qcw-iframe";
+    // Share location: delegate geolocation to the chat page (cross-origin).
+    el.setAttribute("allow", "geolocation");
     el.src = `${cfg().qismoIframeUrl}/iframes/v5/${appId}/full-widget/${channelId()}${params()}`;
     document.body.appendChild(el);
   };

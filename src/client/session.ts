@@ -13,7 +13,7 @@
  * window qismo-api allows (LiveHandover.Config session_ttl_range, 172 800 s).
  */
 
-import { DEFAULT_SDK_ORIGIN, isSdkOrigin } from "./origins"
+import { DEFAULT_SDK_ORIGIN, isApiOrigin, isSdkOrigin } from "./origins"
 
 export const SESSION_KEY = "qiscus-handoff:session:v1"
 export const PREVIOUS_SESSION_KEY = "qiscus-handoff:previous-session:v1"
@@ -38,6 +38,12 @@ export interface StoredSession {
   user: SdkUser
   /** The Qiscus SDK host this login belongs to (region). Absent = DEFAULT_SDK_ORIGIN. */
   sdk?: string
+  /**
+   * The qismo-api host the invite was exchanged with (origins.ts API_ORIGINS).
+   * The room reads the app's share-location config from it on a resume.
+   * Absent (sessions stored before it existed) = no share location on resume.
+   */
+  api?: string
   savedAt: number
   expiresAt: number
 }
@@ -85,6 +91,7 @@ function parse(raw: string | null): StoredSession | null {
       ROOM_ID_RE.test(s.roomId) &&
       isSdkUser(s.user) &&
       (s.sdk === undefined || (typeof s.sdk === "string" && isSdkOrigin(s.sdk))) &&
+      (s.api === undefined || (typeof s.api === "string" && isApiOrigin(s.api))) &&
       Number.isFinite(s.savedAt) &&
       Number.isFinite(s.expiresAt)
     ) {
@@ -96,11 +103,12 @@ function parse(raw: string | null): StoredSession | null {
 
 export function saveSession(
   storage: KeyValueStorage,
-  input: { appId: string; roomId: string; user: SdkUser; sdk?: string },
+  input: { appId: string; roomId: string; user: SdkUser; sdk?: string; api?: string },
   now: number,
 ): StoredSession {
   if (!APP_CODE_RE.test(input.appId)) throw new Error("invalid app id")
   if (input.sdk !== undefined && !isSdkOrigin(input.sdk)) throw new Error("invalid sdk host")
+  if (input.api !== undefined && !isApiOrigin(input.api)) throw new Error("invalid api host")
   if (!ROOM_ID_RE.test(String(input.roomId))) throw new Error("invalid room id")
   if (!isSdkUser(input.user)) throw new Error("invalid sdk user")
   const user = { ...input.user }
@@ -111,6 +119,7 @@ export function saveSession(
     roomId: String(input.roomId),
     user,
     ...(input.sdk && input.sdk !== DEFAULT_SDK_ORIGIN ? { sdk: input.sdk } : {}),
+    ...(input.api ? { api: input.api } : {}),
     savedAt: now,
     expiresAt: now + SESSION_MAX_AGE_MS,
   }

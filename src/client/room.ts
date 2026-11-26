@@ -6,7 +6,7 @@
  * origin (our /widget.html). Embedded anywhere else, it behaves exactly as
  * before and never writes or reads the stored SDK login.
  */
-import { DEFAULT_SDK_ORIGIN, pickSdkOrigin } from "./origins"
+import { DEFAULT_SDK_ORIGIN, isApiOrigin, pickApiOrigin, pickSdkOrigin } from "./origins"
 import { type KeyValueStorage, type StoredSession, loadSession, saveSession, sessionSdk } from "./session"
 
 export function trustedParent(w: Window): boolean {
@@ -27,11 +27,16 @@ export function persistLogin(
   userData: unknown,
   now: number,
   sdk: string = DEFAULT_SDK_ORIGIN,
+  api: string | null = null,
 ): boolean {
   if (!trustedParent(w)) return false
   const user = (userData as { user?: unknown } | null)?.user as StoredSession["user"] | undefined
   try {
-    saveSession(storage, { appId, roomId: String(roomId), user: user as StoredSession["user"], sdk }, now)
+    saveSession(
+      storage,
+      { appId, roomId: String(roomId), user: user as StoredSession["user"], sdk, ...(api ? { api } : {}) },
+      now,
+    )
     return true
   } catch {
     return false
@@ -57,13 +62,30 @@ export function roomSdkOrigin(query: string, resumed: StoredSession | null, href
   return pickSdkOrigin(new URLSearchParams(query).get("sdk_base_url"), href)
 }
 
+/**
+ * The qismo-api host the room reads the app's share-location config from
+ * (`GET <host>/api/v2/share_location_config/<app>`, packages/qiscus-ui-vue
+ * src/lib/shareLocation.js): the host the invite was exchanged with. On a
+ * resume, the stored session's `api`; on an invite, `?base_url=` (set by
+ * QismoFull from the page's checked baseUrl) when it is one of origins.ts
+ * API_ORIGINS. Absent or not allowed = null: no Location menu, the room still
+ * starts (share location is optional, unlike the SDK host).
+ */
+export function roomApiOrigin(query: string, resumed: StoredSession | null, href?: string): string | null {
+  if (resumed) return resumed.api && isApiOrigin(resumed.api, href) ? resumed.api : null
+  const raw = new URLSearchParams(query).get("base_url")
+  if (!raw) return null
+  return pickApiOrigin(raw, href)
+}
+
 declare global {
   interface Window {
     HandoffRoom?: {
       trustedParent(): boolean
-      persistLogin(appId: string, roomId: string, userData: unknown, sdk?: string): boolean
+      persistLogin(appId: string, roomId: string, userData: unknown, sdk?: string, api?: string | null): boolean
       resumeSession(appId: string): StoredSession | null
       sdkOrigin(resumed: StoredSession | null): string | null
+      apiOrigin(resumed: StoredSession | null): string | null
     }
   }
 }
@@ -71,8 +93,10 @@ declare global {
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   window.HandoffRoom = {
     trustedParent: () => trustedParent(window),
-    persistLogin: (appId, roomId, userData, sdk) => persistLogin(window, window.localStorage, appId, roomId, userData, Date.now(), sdk),
+    persistLogin: (appId, roomId, userData, sdk, api) =>
+      persistLogin(window, window.localStorage, appId, roomId, userData, Date.now(), sdk, api ?? null),
     resumeSession: (appId) => resumeSession(window, window.localStorage, appId, Date.now()),
     sdkOrigin: (resumed) => roomSdkOrigin(location.search, resumed),
+    apiOrigin: (resumed) => roomApiOrigin(location.search, resumed),
   }
 }

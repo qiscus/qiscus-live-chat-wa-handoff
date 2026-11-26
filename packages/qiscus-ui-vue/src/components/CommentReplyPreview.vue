@@ -31,6 +31,8 @@ export default {
   computed: {
     textToRender() {
       if (this.comment.type === 'carousel') return 'Carousel Message';
+      // A replied-to location shows a label, not the wire text "Sent Location".
+      if (this.comment.type === 'location') return 'Location';
       if (this.comment.type === 'buttons') return this.comment.payload.text;
       return this.comment.type !== 'reply'
         ? this.comment.message

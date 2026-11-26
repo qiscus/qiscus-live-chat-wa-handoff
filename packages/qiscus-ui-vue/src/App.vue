@@ -9,6 +9,7 @@
 import QiscusCore from './lib/SDKCore';
 import QcwTrigger from './components/QcwTrigger';
 import ChatWindow from './components/ChatWindow';
+import { fetchShareLocationConfig, secureBaseUrl } from './lib/shareLocation';
 import {
   focusMessageForm,
   scrollIntoElement,
@@ -34,6 +35,8 @@ export default {
   },
   created() {
     const self = this;
+    const shareLocationSeed =
+      (typeof window !== 'undefined' && window.qiscusShareLocation) || {};
     const colors = {
       primary: '#01416C',
       white: '#FFFFFF',
@@ -114,6 +117,17 @@ export default {
       // seeded from window.qiscusOmniForm for a page that sets it earlier.
       omniForm:
         (typeof window !== 'undefined' && window.qiscusOmniForm) || null,
+      // Share location (customer widget only). Only a page that sets
+      // window.qiscusShareLocation = { baseUrl } (iframes/v5 views, see
+      // _share-location-config.blade.php) loads the app's public config from
+      // qismo-api; elsewhere (agent inbox) `config` stays null: no Location
+      // menu, and location bubbles use OpenStreetMap tiles.
+      shareLocation: {
+        baseUrl: shareLocationSeed.baseUrl || null,
+        appCode: shareLocationSeed.appCode || null,
+        // { enabled, provider: 'osm'|'google', googleApiKey } once loaded
+        config: null,
+      },
       displayMode: 'widget',
       chatTarget(target) {
         return self.core.chatTarget(target).then(
@@ -167,7 +181,33 @@ export default {
     };
     window.QiscusUI = self.core.UI;
   },
+  watch: {
+    // core.AppId (the app code) is known once QiscusSDK.core.init() ran.
+    'core.isInit': {
+      immediate: true,
+      handler(isInit) {
+        if (isInit) this.loadShareLocationConfig();
+      },
+    },
+    'core.UI.shareLocation.baseUrl': function onShareLocationBaseUrl() {
+      if (this.core.isInit) this.loadShareLocationConfig();
+    },
+  },
   methods: {
+    loadShareLocationConfig() {
+      const state = this.core.UI && this.core.UI.shareLocation;
+      if (!state) return;
+      const pageProtocol = typeof window !== 'undefined' ? window.location.protocol : '';
+      const baseUrl = secureBaseUrl(state.baseUrl, pageProtocol);
+      const appCode = state.appCode || this.core.AppId;
+      if (!baseUrl || !appCode) return;
+      const requestKey = `${baseUrl}|${appCode}`;
+      if (this.shareLocationRequestKey === requestKey) return;
+      this.shareLocationRequestKey = requestKey;
+      fetchShareLocationConfig({ baseUrl, appCode: String(appCode) }).then((config) => {
+        if (this.shareLocationRequestKey === requestKey) state.config = config;
+      });
+    },
     toggleWindowStatus() {
       // cache room id if not null
       // if (this.core.selected) this.roomId = this.core.selected.id;

@@ -726,7 +726,8 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
       const frame = document.createElement("iframe")
       frame.id = IFRAME_ID
       frame.title = "Live Chat"
-      frame.setAttribute("allow", "clipboard-write")
+      // geolocation: Share location in the room ("Use current location").
+      frame.setAttribute("allow", "clipboard-write; geolocation")
       const app = encodeURIComponent(session.appId)
       // No token or user data in this URL: the room reads the stored session.
       frame.src = `${BASE}iframes/v5/${app}/live-handover-room?resume=1&app_id=${app}`
