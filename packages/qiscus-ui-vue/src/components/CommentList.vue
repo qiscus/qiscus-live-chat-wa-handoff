@@ -32,11 +32,14 @@
             :isInteractiveVoiceCall = "comment.type === 'text' && comment.extras.type === 'interactive_wa' && comment.extras.sub_type === 'voice_call' ? true : false"
             :isInteractiveCallPermissionRequest = "comment.type === 'text' && comment.extras.type === 'interactive_wa' && comment.extras.sub_type === 'call_permission_request' ? true : false"
             :isInteractiveCtaUrl = "comment.type === 'text' && comment.extras.type === 'interactive_wa' && comment.extras.sub_type === 'cta_url' ? true : false"
+            :isNativeForm = "comment.type === 'text' && comment.extras.type === 'interactive_wa' && comment.extras.sub_type === 'form' ? true : false"
+            :nativeFormStatus = "nativeFormStatuses[String(comment.id)] || null"
             :isOutgoingCall = "comment.type === 'text' && comment.extras && comment.extras.referral && comment.extras.referral.call && comment.extras.referral.call.mark === 'call' ? true : false"
             :isContactCard = "comment.type === 'text' && comment.extras && (((comment.extras.referral && comment.extras.referral.origin === 'contact_request')) || ((comment.extras.wa_contact && comment.extras.wa_contact.origin === 'contact_request'))) ? true : false"
             :stickerUrl = "(comment.type == 'text' && comment.message.match(stickerRegex)) ? comment.message.match(stickerUrlRegex)[0] : null"
             @onChangeMenu="onChangeMenu"
             @commentNotFound="loadMoreComment"
+            @native-form-open="onNativeFormOpen"
             ref="comment"
           )
         li(v-if="isBubbleRoomTyping" id="bubble-room-typing")
@@ -63,11 +66,12 @@ import Icon from './Icon';
 import Loader from './Loader';
 import Comment from './Comment';
 import { scrollIntoElement, scrollIntoLastElement, scrollListToElement, sortCommentsChrono } from '../lib/utils';
+import { nativeFormAnswerStatus } from '../lib/nativeForm';
 
 export default {
   name: 'CommentList',
   components: { Icon, Loader, Comment },
-  props: ['core', 'onClickImage', 'onupdate', 'replyHandler', 'omniFormSending', 'omniFormSendingText'],
+  props: ['core', 'onClickImage', 'onupdate', 'replyHandler', 'omniFormSending', 'omniFormSendingText', 'nativeFormSubmittedIds'],
   data() {
     return {
       isLoadingMore: false,
@@ -111,6 +115,15 @@ export default {
       if (!at || !at.getHours) return '';
       const pad = n => (n < 10 ? `0${n}` : `${n}`);
       return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+    },
+    // Native forms: 'answered' / 'sending' per form comment id, from the
+    // answers in the room plus the ones this visitor just sent (one-shot).
+    nativeFormStatuses() {
+      const status = nativeFormAnswerStatus(this.comments);
+      (this.nativeFormSubmittedIds || []).forEach((id) => {
+        status[String(id)] = 'answered';
+      });
+      return status;
     },
     comments() {
       const { comments, participants, options } = this.core.selected;
@@ -189,6 +202,9 @@ export default {
     }
   },
   methods: {
+    onNativeFormOpen(comment, opener) {
+      this.$emit('native-form-open', comment, opener);
+    },
     onScroll(event) {
       if (this.timeoutId !== -1) {
         this.isReading = false;

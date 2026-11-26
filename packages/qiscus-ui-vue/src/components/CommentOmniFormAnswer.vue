@@ -1,7 +1,7 @@
 <template lang="pug">
   //- Same markup/classes as CommentFlowResponse (WA Flow reply), so the bubble
   //- looks identical: header text, then the gray label | value card.
-  div.qcw-flow-response.qcw-omniform-answer(data-omniform-answer)
+  div.qcw-flow-response.qcw-omniform-answer(data-omniform-answer :data-answer-source="source")
     span(v-if="answer.formName") {{ answer.formName }}
     div.flow-response-container
       table.flow-response-detail
@@ -26,6 +26,10 @@
  * uploads as links. Values follow the same `maskFlowResponse` switch as WA Flow.
  * Every string is customer input and goes through text interpolation only
  * (never v-html); attachment links are https only.
+ *
+ * Also renders native-form answers (nfm_reply name "form"): `parseNativeFormAnswer`
+ * in ../lib/nativeForm.js maps them to the same `{ formName, fields, attachments }`
+ * shape, and `source` tells the two apart in the markup.
  */
 export default {
   name: 'CommentOmniFormAnswer',
@@ -33,6 +37,8 @@ export default {
     answer: { type: Object, required: true },
     attachmentsLabel: { type: String, default: 'Attachments' },
     maskValues: { type: Boolean, default: false },
+    /** 'omniform' (default) or 'form' (Live Chat native form). */
+    source: { type: String, default: 'omniform' },
   },
 };
 </script>

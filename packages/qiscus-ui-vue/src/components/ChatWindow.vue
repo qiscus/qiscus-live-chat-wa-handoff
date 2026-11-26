@@ -71,6 +71,8 @@
         :core="core"
         :omni-form-sending="omniFormSendingVisible ? omniForm.sendingSince : null"
         :omni-form-sending-text="omniFormSendingText"
+        :native-form-submitted-ids="nativeForm.submittedIds"
+        @native-form-open="openNativeForm"
         :on-click-image="openImageModal"
         :repliedComment="repliedComment"
         :replyHandler="setReply"
@@ -113,6 +115,16 @@
         @submitted="onOmniFormSubmitted"
         @close="onOmniFormClosed")
 
+      native-form-sheet(
+        :form="nativeForm.form"
+        :draft="nativeForm.draft"
+        :send="sendNativeForm"
+        :return-focus-to="nativeForm.opener"
+        :labels="nativeFormSettings.labels"
+        :brand-color="core.UI.colors && core.UI.colors.bubleRightColor"
+        @submitted="onNativeFormSubmitted"
+        @close="closeNativeForm")
+
     //- Start of message info
     message-info(v-if="core.UI.isMessageInfoActive" :core="core")
 </template>
@@ -142,6 +154,14 @@ import {
   omniFormEmbedUrl,
   omniFormLabel,
 } from '../lib/omniForm';
+import NativeFormSheet from './NativeFormSheet';
+import {
+  answerUniqueId,
+  buildAnswerExtras,
+  isNativeFormAnswered,
+  nativeFormConfig,
+  parseNativeForm,
+} from '../lib/nativeForm';
 
 /**
  * After a submit, once the sheet closes, the "Sending form…" bubble stays at
@@ -170,6 +190,7 @@ export default {
     CommentListEmail,
     AssistantResult,
     OmniFormSheet,
+    NativeFormSheet,
   },
   data() {
     return {
@@ -180,6 +201,16 @@ export default {
         submitted: false,
         sendingSince: null,
         answersAtSubmit: [],
+      },
+      // Native form sheet (see openNativeForm). Ids are form comment ids.
+      nativeForm: {
+        comment: null,
+        form: null,
+        opener: null,
+        draft: null,
+        drafts: {},
+        submittedIds: [],
+        uniqueIds: {},
       },
       repliedComment: null,
       imageModalContent: null,
@@ -208,6 +239,9 @@ export default {
   computed: {
     omniFormSettings() {
       return omniFormConfig(this.core.UI);
+    },
+    nativeFormSettings() {
+      return nativeFormConfig(this.core.UI);
     },
     omniFormSendingText() {
       return omniFormLabel(this.omniFormSettings.labels, 'sending');
@@ -290,6 +324,9 @@ export default {
       this.omniForm.opener = null;
       this.omniForm.submitted = false;
       this.stopOmniFormSending();
+      this.nativeForm.form = null;
+      this.nativeForm.comment = null;
+      this.nativeForm.opener = null;
     },
     'core.UI.config.showRepliedForm': {
       handler(newVal) {
@@ -356,6 +393,77 @@ export default {
     stopOmniFormSending() {
       window.clearTimeout(this.omniFormSendingTimer);
       this.omniForm.sendingSince = null;
+    },
+    /**
+     * Native form (see ../lib/nativeForm.js): the bubble's button opens the
+     * form in a sheet, unless it is invalid or already answered (one-shot).
+     */
+    openNativeForm(comment, opener) {
+      if (!comment || !this.core.selected) return;
+      const form = parseNativeForm(comment.extras);
+      if (!form) return;
+      const key = String(comment.id);
+      if (this.nativeForm.submittedIds.indexOf(key) !== -1) return;
+      if (isNativeFormAnswered(comment, this.core.selected.comments)) return;
+      this.nativeForm.draft = this.nativeForm.drafts[key] || null;
+      this.nativeForm.opener = opener || null;
+      this.nativeForm.comment = comment;
+      this.nativeForm.form = form;
+    },
+    /** Closing keeps what was typed, until the answer is sent. */
+    closeNativeForm(values) {
+      const comment = this.nativeForm.comment;
+      if (comment && values) this.$set(this.nativeForm.drafts, String(comment.id), values);
+      this.nativeForm.form = null;
+      this.nativeForm.comment = null;
+    },
+    onNativeFormSubmitted() {
+      this.nativeForm.form = null;
+      this.nativeForm.comment = null;
+    },
+    /**
+     * Posts the answer as the visitor, per the native form contract: text =
+     * form title, answers only in extras (nfm_reply "form"). A retry reuses
+     * the first attempt's unique id (like the SDK's own resend) and drops
+     * that attempt's failed local copy, so the room shows one answer.
+     */
+    sendNativeForm(values) {
+      const comment = this.nativeForm.comment;
+      const form = this.nativeForm.form;
+      const room = this.core.selected;
+      if (!comment || !form || !room) return Promise.reject(new Error('native form closed'));
+      const roomId = room.id;
+      const key = String(comment.id);
+      let uniqueId = this.nativeForm.uniqueIds[key];
+      if (uniqueId) {
+        this.dropFailedNativeFormAnswer(uniqueId);
+      } else {
+        const now = globalThis.performance.now() + globalThis.performance.timeOrigin;
+        uniqueId = answerUniqueId(roomId, comment.id, now);
+        this.nativeForm.uniqueIds[key] = uniqueId;
+      }
+      const extras = buildAnswerExtras(form, values, comment.id);
+      return this.core
+        .sendComment(roomId, form.title, uniqueId, 'text', null, extras)
+        .then((res) => {
+          const submitted = this.nativeForm.submittedIds;
+          if (submitted.indexOf(key) === -1) submitted.push(key);
+          this.$delete(this.nativeForm.drafts, key);
+          const cb = this.core.options && this.core.options.sentMessageCallback;
+          if (cb) cb(res);
+          return res;
+        });
+    },
+    dropFailedNativeFormAnswer(uniqueId) {
+      const drop = (list) => {
+        if (!Array.isArray(list)) return;
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+          if (list[i] && list[i].unique_id === uniqueId && list[i].isFailed) list.splice(i, 1);
+        }
+      };
+      if (this.core.selected) drop(this.core.selected.comments);
+      // eslint-disable-next-line no-underscore-dangle
+      drop(this.core._pendingComments);
     },
     assistantChanges(value) {
       this.assistant.agentInput = value.input;
