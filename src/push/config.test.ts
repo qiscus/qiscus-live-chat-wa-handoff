@@ -1,7 +1,7 @@
 // SYNTHETIC: every value below is invented for tests. None is a real Firebase
 // project, API key or VAPID key.
 import { describe, expect, test } from "bun:test"
-import { PUSH_ENV_KEYS, readPushConfig } from "./config"
+import { PUSH_ENV_KEYS, invalidFirebaseFields, isAppCode, readPushConfig } from "./config"
 
 async function syntheticVapidKey(): Promise<string> {
   const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
@@ -115,5 +115,27 @@ describe("readPushConfig (synthetic)", () => {
         "PUSH_ROOM_ORIGINS",
       ].sort(),
     )
+  })
+})
+
+describe("shared validators (used by the Worker env and the per-app qismo-api config)", () => {
+  const ok = {
+    apiKey: "AIza" + "S".repeat(35),
+    projectId: "synthetic-project",
+    senderId: "123456789012",
+    appId: "1:123456789012:web:abcdef0123456789",
+    vapidKey: "",
+    authDomain: "",
+  }
+  test("invalidFirebaseFields: valid set, empty optional values skipped", () => {
+    expect(invalidFirebaseFields(ok)).toEqual([])
+  })
+  test("invalidFirebaseFields: names each malformed value", () => {
+    expect(invalidFirebaseFields({ ...ok, appId: "1:999999999999:web:abcdef0123456789" })).toEqual(["FIREBASE_APP_ID"])
+    expect(invalidFirebaseFields({ ...ok, vapidKey: "short", authDomain: "-bad-" })).toEqual(["FIREBASE_VAPID_KEY", "FIREBASE_AUTH_DOMAIN"])
+  })
+  test("isAppCode", () => {
+    for (const good of ["a", "app_1-X", "x".repeat(64)]) expect(isAppCode(good)).toBe(true)
+    for (const bad of ["", "x".repeat(65), "a/b", "a.b", "a b", 1, null]) expect(isAppCode(bad)).toBe(false)
   })
 })

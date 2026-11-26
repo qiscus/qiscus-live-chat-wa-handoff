@@ -23,6 +23,13 @@
  * sw.js takes over at once instead of waiting for every tab to close. The page
  * registers with updateViaCache "none" and calls registration.update() when it
  * becomes visible again (src/client/main.ts).
+ *
+ * Scopes: the same file runs as the root worker (`<base>sw.js`, scope
+ * `<base>`: Worker env push config + the PWA shell) and, for each app whose
+ * push config comes from qismo-api, as `<base>a/<app>/sw.js` with scope
+ * `<base>a/<app>/` (its own push subscription). A per-app worker controls no
+ * page and caches nothing; it only handles pushes and notification clicks, reads
+ * ITS app's context, and opens the same `<base>widget.html` on a click.
  */
 
 /* global self, clients, caches, indexedDB */
@@ -43,8 +50,14 @@ const CTX_KEY = "current"
 
 // The path prefix the app is served under ("/" on its own domain, or a sub-path
 // when another server serves it, e.g. qismo-api at /api/v2/live_handover/w/):
-// the worker's scope is the prefix itself.
-const BASE = new URL(self.registration.scope).pathname
+// the root worker's scope is the prefix itself; a per-app worker's scope is
+// `<prefix>a/<app>/` (app code as in src/push/config.ts).
+const SCOPE_PATH = new URL(self.registration.scope).pathname
+const PER_APP = /^(.*\/)a\/([A-Za-z0-9_-]{1,64})\/$/.exec(SCOPE_PATH)
+const BASE = PER_APP ? PER_APP[1] : SCOPE_PATH
+const SCOPE_APP = PER_APP ? PER_APP[2] : null
+// MUST match ctxKey() in src/client/swContext.ts.
+const MY_CTX_KEY = SCOPE_APP ? SCOPE_PATH : CTX_KEY
 const ICON = BASE + "img/pwa/icon-192.png"
 const BADGE = BASE + "img/pwa/badge-96.png"
 const RESUME_PATH = BASE + "widget.html"
@@ -69,11 +82,13 @@ function loadContext() {
     req.onsuccess = () => {
       const db = req.result
       try {
-        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(CTX_KEY)
+        const get = db.transaction(CTX_STORE, "readonly").objectStore(CTX_STORE).get(MY_CTX_KEY)
         get.onsuccess = () => {
           db.close()
           const v = get.result
-          resolve(v && typeof v.roomId === "string" && typeof v.selfEmail === "string" ? v : null)
+          const ok = v && typeof v.roomId === "string" && typeof v.selfEmail === "string"
+          // A per-app worker only trusts an entry for its own app.
+          resolve(ok && (!SCOPE_APP || v.appId === SCOPE_APP) ? v : null)
         }
         get.onerror = () => {
           db.close()
@@ -211,17 +226,20 @@ async function handleClick() {
 // ------------------------------------------------------------------ shell cache
 
 async function install() {
+  if (SCOPE_APP) return // per-app worker: no shell, it controls no page
   const cache = await caches.open(SHELL_CACHE)
   await cache.addAll(SHELL)
 }
 
 async function activate() {
+  if (SCOPE_APP) return // the root worker owns the shell cache
   const names = await caches.keys()
   await Promise.all(names.filter((n) => n.startsWith(SHELL_PREFIX) && n !== SHELL_CACHE).map((n) => caches.delete(n)))
   await clients.claim()
 }
 
 function routeFetch(event) {
+  if (SCOPE_APP) return
   const req = event.request
   if (req.method !== "GET") return
   let url

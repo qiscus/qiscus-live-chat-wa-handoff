@@ -79,3 +79,31 @@ describe("existing routes still work (synthetic)", () => {
     expect(await res.text()).toContain("Live Handover Widget")
   })
 })
+
+describe("GET /a/:appCode/sw.js (synthetic)", () => {
+  test("serves public/sw.js for the app's own scope, never cached", async () => {
+    const res = await app.request("/a/app_1-X/sw.js?v=1", {}, { ASSETS: fakeAssets })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("asset:/sw.js")
+    expect(res.headers.get("service-worker-allowed")).toBe("/a/app_1-X/")
+    expect(res.headers.get("cache-control")).toBe("no-cache")
+    expect(res.headers.get("content-type")).toContain("javascript")
+  })
+
+  test("404 for an invalid app code or a missing asset", async () => {
+    for (const path of ["/a/bad.code/sw.js", "/a/" + "x".repeat(65) + "/sw.js", "/a/a%20b/sw.js", "/a/%2E%2E/sw.js"]) {
+      const res = await app.request(path, {}, { ASSETS: fakeAssets })
+      expect(res.status).toBe(404)
+      expect(res.headers.get("service-worker-allowed")).toBeNull()
+    }
+    const missing = { fetch: async () => new Response("Not found", { status: 404 }) } as unknown as Fetcher
+    expect((await app.request("/a/app1/sw.js", {}, { ASSETS: missing })).status).toBe(404)
+  })
+
+  test("only GET (and HEAD) are routed", async () => {
+    expect((await app.request("/a/app1/sw.js", { method: "POST" }, { ASSETS: fakeAssets })).status).toBe(404)
+    const head = await app.request("/a/app1/sw.js", { method: "HEAD" }, { ASSETS: fakeAssets })
+    expect(head.status).toBe(200)
+    expect(head.headers.get("service-worker-allowed")).toBe("/a/app1/")
+  })
+})

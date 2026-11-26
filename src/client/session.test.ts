@@ -9,6 +9,7 @@ import {
   loadSession,
   sameIdentity,
   saveSession,
+  stampSessionApi,
   stashSessionForInvite,
   takePreviousSession,
 } from "./session"
@@ -173,5 +174,31 @@ describe("SDK device-token REST (synthetic fake upstream)", () => {
       expect(r.ok).toBe(false)
     }
     expect(f.calls).toHaveLength(0)
+  })
+})
+
+describe("session qismo origin (api) for per-app push config (synthetic)", () => {
+  const API = "https://qismo-stag4.qiscus.io"
+  test("saved and loaded only when it is an allowlisted qismo origin", () => {
+    const s = new MemoryStorage()
+    const saved = saveSession(s, { appId: "app1", roomId: "1", user: user(), api: API }, T0)
+    expect(saved.api).toBe(API)
+    const loaded = loadSession(s, T0)
+    expect(loaded.state === "valid" && loaded.session.api).toBe(API)
+    expect(() => saveSession(s, { appId: "app1", roomId: "1", user: user(), api: "https://evil.example" }, T0)).toThrow()
+    // A tampered stored value invalidates the session (as for `sdk`).
+    s.setItem(SESSION_KEY, JSON.stringify({ ...saved, api: "https://user-content.qiscus.io" }))
+    expect(loadSession(s, T0).state).toBe("none")
+  })
+
+  test("stampSessionApi adds it once, keeps the expiry, refuses foreign hosts", () => {
+    const s = new MemoryStorage()
+    const saved = saveSession(s, { appId: "app1", roomId: "1", user: user() }, T0)
+    expect(stampSessionApi(s, "https://evil.example", T0 + 5)?.api).toBeUndefined()
+    const stamped = stampSessionApi(s, API, T0 + 5)!
+    expect(stamped.api).toBe(API)
+    expect(stamped.expiresAt).toBe(saved.expiresAt)
+    expect(stampSessionApi(s, "https://qismo.qiscus.com", T0 + 6)!.api).toBe(API) // not overwritten
+    expect(stampSessionApi(new MemoryStorage(), API, T0)).toBeNull()
   })
 })

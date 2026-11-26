@@ -2,7 +2,7 @@
 // API (fetch), a fake FCM (token minting), a fake Notification permission
 // and a fake service-worker context store. No browser, no network.
 import { describe, expect, test } from "bun:test"
-import { PushController, REG_KEY, OPT_IN_KEY, errorDetail, type PushDeps, type PushUiState } from "./controller"
+import { type ConfigTarget, PushController, REG_KEY, OPT_IN_KEY, errorDetail, type ConfiguredPushConfig, type PushDeps, type PushUiState } from "./controller"
 import { detectSupport } from "./support"
 import { loadSession, saveSession, stashSessionForInvite, type SdkUser } from "./session"
 import { MemoryStorage } from "./testing"
@@ -24,7 +24,18 @@ const CONFIG: PushConfig = {
 const tok = (n: number) => `synthetic-fcm-${n}:` + "A".repeat(120)
 const u = (email: string): SdkUser => ({ email, token: `synthetic-sdk-token-${email}` })
 
-function harness(over: Partial<{ config: PushConfig; permission: NotificationPermission; support: ReturnType<typeof detectSupport>; grant: NotificationPermission; status: number }> = {}) {
+type HarnessOptions = {
+  config: PushConfig
+  /** Per-app config (what main.ts resolves from qismo-api + env); wins over `config` when given. */
+  configFor: (target?: ConfigTarget) => PushConfig
+  apiBaseUrl: string
+  permission: NotificationPermission
+  support: ReturnType<typeof detectSupport>
+  grant: NotificationPermission
+  status: number
+}
+
+function harness(over: Partial<HarnessOptions> = {}) {
   const storage = new MemoryStorage()
   let now = 1_800_000_000_000
   let permission: NotificationPermission = over.permission ?? "default"
@@ -32,6 +43,10 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
   const sdkCalls: { path: string; app: string; user: string; sdkToken: string; device: string }[] = []
   const fcmCalls: string[] = []
   const swWrites: unknown[] = []
+  const swScopes: (string | undefined)[] = []
+  const deletedScopes: (string | undefined)[] = []
+  const tokenScopes: (string | undefined)[] = []
+  const configTargets: (ConfigTarget | undefined)[] = []
   const states: PushUiState[] = []
   let status = over.status ?? 200
 
@@ -61,21 +76,28 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
       permission = over.grant ?? "granted"
       return permission
     },
-    loadConfig: async () => over.config ?? CONFIG,
+    loadConfig: async (target) => {
+      configTargets.push(target)
+      return over.configFor ? over.configFor(target) : (over.config ?? CONFIG)
+    },
     fcm: {
-      getToken: async () => {
+      getToken: async (cfg: ConfiguredPushConfig) => {
         fcmCalls.push("getToken")
+        tokenScopes.push(cfg.swScope)
         return tok(nextToken)
       },
-      deleteToken: async () => {
+      deleteToken: async ({ swScope }) => {
         fcmCalls.push("deleteToken")
+        deletedScopes.push(swScope)
       },
     },
     swContext: {
-      write: async (ctx) => {
+      write: async (ctx, scope) => {
         swWrites.push(ctx)
+        swScopes.push(scope)
       },
     },
+    ...(over.apiBaseUrl ? { apiBaseUrl: over.apiBaseUrl } : {}),
     onState: (s) => states.push(s),
   }
   const ctl = new PushController(deps)
@@ -85,6 +107,10 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
     sdkCalls,
     fcmCalls,
     swWrites,
+    swScopes,
+    deletedScopes,
+    tokenScopes,
+    configTargets,
     states,
     last: () => states[states.length - 1],
     setPermission: (p: NotificationPermission) => (permission = p),
@@ -92,7 +118,7 @@ function harness(over: Partial<{ config: PushConfig; permission: NotificationPer
     advance: (ms: number) => (now += ms),
     setStatus: (s: number) => (status = s),
     nowFn: () => now,
-    login: (appId: string, roomId: string, email: string) => saveSession(storage, { appId, roomId, user: u(email) }, now),
+    login: (appId: string, roomId: string, email: string, api?: string) => saveSession(storage, { appId, roomId, user: u(email), ...(api ? { api } : {}) }, now),
   }
 }
 
@@ -457,5 +483,119 @@ describe("PushController (synthetic)", () => {
     const dump = JSON.stringify(h.states)
     expect(dump).not.toContain("synthetic-fcm")
     expect(dump).not.toContain("synthetic-sdk-token")
+  })
+})
+
+// Per-app config from qismo-api (CONTRACT.md "Widget consumption"). The configs
+// below are what main.ts resolves (appConfig.ts resolveAppConfig): a backend
+// answer carries swScope, the env config does not.
+describe("PushController per-app config and scopes (synthetic)", () => {
+  const BACKEND: PushConfig = {
+    status: "configured",
+    firebase: {
+      apiKey: "AIza" + "B".repeat(35),
+      projectId: "synthetic-backend",
+      messagingSenderId: "222222222222",
+      appId: "1:222222222222:web:0123456789abcdef",
+    },
+    appCodes: ["app1"],
+    roomOrigins: [],
+    swScope: "/a/app1/",
+  }
+  const ENV_OTHER_APPS: PushConfig = { ...CONFIG, appCodes: ["other-app"] } as PushConfig
+  const API = "https://qismo-stag4.qiscus.io"
+
+  test("a configured backend answer enables an app the env does not list, in the app's own scope, without vapidKey", async () => {
+    const h = harness({ configFor: (t) => (t?.appId === "app1" ? BACKEND : ENV_OTHER_APPS) })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    expect(h.last()).toEqual({ kind: "offer" })
+    await h.ctl.enable()
+    expect(h.last()).toEqual({ kind: "enabled" })
+    expect(h.tokenScopes).toEqual(["/a/app1/"])
+    expect(h.swScopes.at(-1)).toBe("/a/app1/")
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!)).toMatchObject({ appId: "app1", scope: "/a/app1/" })
+  })
+
+  test("config is asked per app, from the session's stored qismo origin", async () => {
+    const h = harness({ configFor: () => BACKEND })
+    h.login("app1", "11", "c1@example.invalid", API)
+    await h.ctl.sessionReady()
+    expect(h.configTargets).toContainEqual({ appId: "app1", api: API })
+  })
+
+  test("an invite stamps the page's qismo origin on the session the room stored; a resume does not", async () => {
+    const h = harness({ apiBaseUrl: API })
+    h.ctl.beginInvite()
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    const loaded = loadSession(h.storage, h.nowFn())
+    expect(loaded.state === "valid" && loaded.session.api).toBe(API)
+
+    const r = harness({ apiBaseUrl: "https://qismo.qiscus.com" })
+    r.login("app1", "11", "c1@example.invalid")
+    await r.ctl.sessionReady() // resume: no invite on this page load
+    const resumed = loadSession(r.storage, r.nowFn())
+    expect(resumed.state === "valid" && resumed.session.api).toBeUndefined()
+  })
+
+  test("migration: an env (root-scope) registration moves to the app's scope; the root subscription and its token are removed", async () => {
+    let backend = false
+    const h = harness({ configFor: () => (backend ? BACKEND : CONFIG) })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!).scope).toBeUndefined() // root, as today
+
+    // Next page load: qismo-api now serves this app's config.
+    backend = true
+    const h2 = new PushController({ ...(h.ctl as any).deps })
+    h.rotateToken() // a new scope = a new push subscription = a new FCM token
+    h.sdkCalls.length = 0
+    h.fcmCalls.length = 0
+    h.deletedScopes.length = 0
+    h.swScopes.length = 0
+    await h2.sessionReady()
+    expect(h.last()).toEqual({ kind: "enabled" })
+    expect(h.sdkCalls.map((c) => [c.path, c.device])).toEqual([
+      ["set_user_device_token", tok(2)],
+      ["remove_user_device_token", tok(1)],
+    ])
+    expect(h.fcmCalls).toEqual(["getToken", "deleteToken"])
+    expect(h.deletedScopes).toEqual([undefined]) // the ROOT subscription is unsubscribed
+    expect(h.swWrites.at(-2)).toBeNull() // root context cleared ...
+    expect(h.swScopes.slice(-2)).toEqual([undefined, "/a/app1/"]) // ... and the app's written
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!)).toMatchObject({ fcmToken: tok(2), scope: "/a/app1/" })
+  })
+
+  test("migration back: qismo-api config removed -> env root scope, the per-app subscription is removed", async () => {
+    let backend = true
+    const h = harness({ configFor: () => (backend ? BACKEND : CONFIG) })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    backend = false
+    const h2 = new PushController({ ...(h.ctl as any).deps })
+    h.rotateToken()
+    h.deletedScopes.length = 0
+    await h2.sessionReady()
+    expect(h.deletedScopes).toEqual(["/a/app1/"])
+    expect(JSON.parse(h.storage.getItem(REG_KEY)!).scope).toBeUndefined()
+  })
+
+  test("teardown unsubscribes the scope the registration was made in, even when the config no longer loads", async () => {
+    let cfg: PushConfig = BACKEND
+    const h = harness({ configFor: () => cfg })
+    h.login("app1", "11", "c1@example.invalid")
+    await h.ctl.sessionReady()
+    await h.ctl.enable()
+    cfg = { status: "unconfigured", missing: [], invalid: [] }
+    const h2 = new PushController({ ...(h.ctl as any).deps })
+    h.deletedScopes.length = 0
+    await h2.sessionClosed()
+    expect(h.deletedScopes).toEqual(["/a/app1/"])
+    expect(h.swWrites.at(-1)).toBeNull()
+    expect(h.swScopes.at(-1)).toBe("/a/app1/")
+    expect(h.storage.getItem(REG_KEY)).toBeNull()
   })
 })

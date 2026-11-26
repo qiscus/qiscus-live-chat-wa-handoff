@@ -3,19 +3,24 @@
  * /js/handoff-page.js (see page.ts, which drives it).
  *
  * page.ts calls:
- *   const push = start({ iframeUrl, sdkBaseUrl })
+ *   const push = start({ iframeUrl, sdkBaseUrl, baseUrl })
  *   invite (#t=) present -> push.beginInvite(); QismoFull mounts as before;
  *                           handoff-ready -> push.handoffReady();
  *                           handoff-error -> push.inviteFailed()
  *   no invite            -> push.resume() -> session ? push.mountResumeRoom(...)
  *                                                    : existing QismoFull path
  *
+ * Push config per app: qismo-api's push_config for the app (from the session's
+ * stored qismo origin, else this page's validated baseUrl) wins over the
+ * Worker env (/push/config); see appConfig.ts.
+ *
  * Messages from the room iframe are accepted only from THIS origin AND from the
  * current #qcw-iframe window; their payload is never trusted — the session is
  * read from same-origin storage the room wrote.
  */
 import type { PushConfig } from "../push/config"
-import { type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
+import { fetchAppPushConfig, resolveAppConfig } from "./appConfig"
+import { type ConfigTarget, type ConfiguredPushConfig, type ExchangeCapture, PushController, type PushDeps, type PushUiState } from "./controller"
 import { basePathOf } from "./base"
 import { parseInviteLink } from "./inviteLink"
 import { APP_CODE_RE, ROOM_ID_RE, type StoredSession, loadSession } from "./session"
@@ -45,41 +50,71 @@ export function debug(...args: unknown[]): void {
 // already re-checks on navigation; this covers a PWA left open for days.
 const SW_UPDATE_EVERY_MS = 30 * 60 * 1000
 
-let swRegistration: Promise<ServiceWorkerRegistration> | null = null
+// One registration per scope: BASE is the root worker (Worker env config, PWA
+// shell); an app whose config comes from qismo-api gets `${BASE}a/<app>/`
+// (served by GET /a/:appCode/sw.js) with its own push subscription.
+const swRegistrations = new Map<string, Promise<ServiceWorkerRegistration>>()
 let swLastUpdate = 0
-function registerSw(): Promise<ServiceWorkerRegistration> {
-  if (!swRegistration) {
+
+/** A per-app registration controls no page, so `ready` never resolves for it: wait for its worker instead. */
+function whenActive(reg: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
+  if (reg.active) return Promise.resolve(reg)
+  const worker = reg.installing || reg.waiting
+  if (!worker) return Promise.reject(new Error("service worker not installing"))
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("service worker activation timed out")), 20_000)
+    const check = () => {
+      if (worker.state === "activated") {
+        clearTimeout(timer)
+        resolve(reg)
+      } else if (worker.state === "redundant") {
+        clearTimeout(timer)
+        reject(new Error("service worker became redundant"))
+      }
+    }
+    worker.addEventListener("statechange", check)
+    check()
+  })
+}
+
+function registerSw(scope: string = BASE): Promise<ServiceWorkerRegistration> {
+  let registration = swRegistrations.get(scope)
+  if (!registration) {
     // updateViaCache "none": the update check never goes through the HTTP
     // cache, so a deployed sw.js is seen on the very next check.
-    swRegistration = navigator.serviceWorker
-      .register(SW_URL, { scope: BASE, updateViaCache: "none" })
+    const root = scope === BASE
+    registration = navigator.serviceWorker
+      .register(root ? SW_URL : `${scope}sw.js`, { scope, updateViaCache: "none" })
       .then((reg) => {
         debug("sw registered", { scope: reg.scope, active: !!reg.active, waiting: !!reg.waiting })
         swLastUpdate = Date.now()
         reg.addEventListener("updatefound", () => {
           const next = reg.installing
-          debug("sw update found")
+          debug("sw update found", scope)
           next?.addEventListener("statechange", () => debug("sw update state", next.state))
         })
-        return navigator.serviceWorker.ready
+        return root ? navigator.serviceWorker.ready : whenActive(reg)
       })
-    swRegistration.catch((e) => {
-      debug("sw registration failed", String(e))
-      swRegistration = null
+    swRegistrations.set(scope, registration)
+    registration.catch((e) => {
+      debug("sw registration failed", scope, String(e))
+      swRegistrations.delete(scope)
     })
   }
-  return swRegistration
+  return registration
 }
 
-/** Ask the browser to re-check /sw.js (throttled). A changed worker installs and takes over by itself. */
+/** Ask the browser to re-check every worker this page registered (throttled). A changed worker installs and takes over by itself. */
 function checkSwUpdate(force = false): void {
-  if (!swRegistration) return
+  if (swRegistrations.size === 0) return
   if (!force && Date.now() - swLastUpdate < SW_UPDATE_EVERY_MS) return
   swLastUpdate = Date.now()
-  void swRegistration
-    .then((reg) => reg.update())
-    .then(() => debug("sw update check done"))
-    .catch((e) => debug("sw update check failed", String(e)))
+  for (const registration of swRegistrations.values()) {
+    void registration
+      .then((reg) => reg.update())
+      .then(() => debug("sw update check done"))
+      .catch((e) => debug("sw update check failed", String(e)))
+  }
 }
 
 /**
@@ -88,19 +123,20 @@ function checkSwUpdate(force = false): void {
  * minting, because a headless browser cannot reach a real push service.
  * Ignored on every other host.
  */
-function testSeamGetToken(): ((cfg: ConfiguredPushConfig) => Promise<string>) | null {
+type SeamGetToken = (cfg: ConfiguredPushConfig, reg: ServiceWorkerRegistration) => Promise<string>
+function testSeamGetToken(): SeamGetToken | null {
   const host = location.hostname
   if (host !== "localhost" && host !== "127.0.0.1") return null
-  const seam = (window as unknown as { __HANDOFF_PUSH_TEST__?: { fcm?: { getToken?: (c: ConfiguredPushConfig) => Promise<string> } } })
-    .__HANDOFF_PUSH_TEST__
+  const seam = (window as unknown as { __HANDOFF_PUSH_TEST__?: { fcm?: { getToken?: SeamGetToken } } }).__HANDOFF_PUSH_TEST__
   return seam?.fcm?.getToken ?? null
 }
 
 const fcm: Fcm = {
   async getToken(cfg) {
-    const reg = await registerSw()
+    // The worker of this config's scope: an app with qismo-api config has its own.
+    const reg = await registerSw(cfg.swScope ?? BASE)
     const seam = testSeamGetToken()
-    if (seam) return seam(cfg)
+    if (seam) return seam(cfg, reg)
     const path: string = FIREBASE_MODULE // non-literal: loaded at runtime, not bundled here
     let mod: { getToken(c: ConfiguredPushConfig, r: ServiceWorkerRegistration): Promise<string> }
     try {
@@ -112,14 +148,22 @@ const fcm: Fcm = {
     }
     return mod.getToken(cfg, reg)
   },
-  async deleteToken() {
-    const reg = await registerSw()
-    const sub = await reg.pushManager.getSubscription()
+  async deleteToken({ swScope }) {
+    let reg: ServiceWorkerRegistration | undefined
+    if (!swScope || swScope === BASE) reg = await registerSw()
+    else {
+      // EXACT scope only (getRegistration(url) would fall back to the root
+      // worker), and never register a worker just to unsubscribe it.
+      reg = (await navigator.serviceWorker.getRegistrations()).find((r) => new URL(r.scope).pathname === swScope)
+    }
+    const sub = await reg?.pushManager.getSubscription()
     if (sub) await sub.unsubscribe()
+    debug("push subscription removed", { scope: swScope ?? BASE, had: !!sub })
   },
 }
 
-async function loadConfig(): Promise<PushConfig> {
+/** The Worker/container env config (same origin). */
+async function loadEnvConfig(): Promise<PushConfig> {
   const res = await fetch(`${BASE}push/config`, { cache: "no-store", credentials: "same-origin" })
   const body = (await res.json()) as PushConfig
   if (body && (body.status === "configured" || body.status === "unconfigured")) return body
@@ -433,7 +477,7 @@ function createUi(actions: { enable(): void; disable(): void }) {
         console.info("[handoff-push] push off: the room iframe is on another origin and is not in PUSH_ROOM_ORIGINS (or its exchange was not seen)")
         return null
       case "app-not-enabled":
-        console.info("[handoff-push] push off: this app is not in PUSH_APP_CODES")
+        console.info("[handoff-push] push off: this app has no push config in qismo-api and is not in PUSH_APP_CODES")
         return null
       case "unsupported":
         console.info("[handoff-push] push off: this browser has no Web Push here (needs HTTPS + PushManager)")
@@ -582,8 +626,30 @@ function observeExchange(onCapture: (c: ExchangeCapture) => void): void {
   } as typeof proto.send
 }
 
-export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): HandoffPushApi {
+export function start(opts: { iframeUrl: string; sdkBaseUrl?: string; baseUrl?: string }): HandoffPushApi {
   let resuming = false
+
+  // Config sources: the Worker env (/push/config, loaded once) and qismo-api's
+  // per-app push_config, asked only of a validated qismo origin (the session's
+  // stored one, else this page's baseUrl; fetchAppPushConfig re-checks it).
+  let envConfig: Promise<PushConfig> | null = null
+  const loadEnv = () =>
+    (envConfig ??= loadEnvConfig().catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] })))
+  const appConfigs = new Map<string, Promise<PushConfig>>()
+  const loadConfig = (target?: ConfigTarget): Promise<PushConfig> => {
+    const api = target?.api ?? opts.baseUrl
+    if (!target || !api) return loadEnv()
+    const key = `${target.appId}|${api}`
+    let cfg = appConfigs.get(key)
+    if (!cfg) {
+      cfg = Promise.all([loadEnv(), fetchAppPushConfig(window.fetch.bind(window), api, target.appId, location.href)]).then(([env, backend]) => {
+        debug("push config", { appId: target.appId, source: backend ? "qismo-api (wins over env)" : "worker env", vapid: backend ? (backend.vapidKey ? "custom" : "default") : undefined })
+        return resolveAppConfig(env, backend, target.appId, BASE)
+      })
+      appConfigs.set(key, cfg)
+    }
+    return cfg
+  }
   let resumeHandlers: { onReady(): void; onFailed(): void } | null = null
 
   const ui = createUi({ enable: () => void ctl.enable(), disable: () => void ctl.disable() })
@@ -597,8 +663,9 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
     requestPermission: () => Notification.requestPermission(),
     loadConfig,
     fcm,
-    swContext: { write: (ctx) => writeSwContext(indexedDB, ctx) },
+    swContext: { write: (ctx, scope) => writeSwContext(indexedDB, ctx, scope) },
     sdkBaseUrl: opts.sdkBaseUrl,
+    apiBaseUrl: opts.baseUrl,
     onState: (s) => ui.render(s),
     debug,
   })
@@ -624,7 +691,8 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
   let crossOriginAdopted = false
   if (iframeOrigin !== location.origin) observeExchange((c) => (exchange = c))
 
-  // Apps in PUSH_APP_CODES get OUR copy of the room even on a first invite,
+  // Apps enabled for push (qismo-api config for the app, else PUSH_APP_CODES)
+  // get OUR copy of the room even on a first invite,
   // so push guidance can be a local-only bubble inside the chat (a
   // cross-origin room can only get the floating banner). QismoFull learns the
   // app code from the exchange and appends the room iframe at once; we move
@@ -634,7 +702,7 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
   // single-use identity token.
   let roomSwap: Promise<boolean> | null = null
   if (iframeOrigin && iframeOrigin !== location.origin) {
-    const cfgReady = loadConfig().catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] }))
+    void loadEnv() // warm: the swap below holds the room until the config answers
     const swap = async (frame: HTMLIFrameElement): Promise<boolean> => {
       let url: URL
       try {
@@ -646,11 +714,17 @@ export function start(opts: { iframeUrl: string; sdkBaseUrl?: string }): Handoff
       if (url.origin !== iframeOrigin || !m) return false
       const original = frame.src
       frame.src = "about:blank"
-      const cfg = await cfgReady
-      const app = decodeURIComponent(m[1]!)
+      // The app code is in the room path QismoFull built from the exchange.
+      let app = ""
+      try {
+        app = decodeURIComponent(m[1]!)
+      } catch {}
+      const cfg = APP_CODE_RE.test(app)
+        ? await loadConfig({ appId: app }).catch((): PushConfig => ({ status: "unconfigured", missing: [], invalid: [] }))
+        : await loadEnv()
       const ours = cfg.status === "configured" && !!cfg.appCodes && cfg.appCodes.includes(app)
       frame.src = ours ? location.origin + url.pathname + url.search : original
-      debug("room iframe", ours ? "moved to this origin (app in PUSH_APP_CODES)" : "kept on " + iframeOrigin)
+      debug("room iframe", ours ? "moved to this origin (push enabled for the app)" : "kept on " + iframeOrigin)
       return ours
     }
     const watch = new MutationObserver((records) => {

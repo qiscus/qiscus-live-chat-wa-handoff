@@ -4,7 +4,7 @@
 // might arrive through FCM's web push envelope. The real Flash/FCM payload has
 // NOT been observed yet — see README "Unverified".
 import { beforeEach, describe, expect, test } from "bun:test"
-import { CTX_DB, CTX_KEY, CTX_STORE, writeSwContext } from "./swContext"
+import { CTX_DB, CTX_KEY, CTX_STORE, ctxKey, writeSwContext } from "./swContext"
 import { loadServiceWorker, type SwHarness } from "./swTesting"
 
 const ORIGIN = "https://handoff.example.invalid"
@@ -302,3 +302,74 @@ describe("sw.js served under a path prefix (synthetic)", () => {
   })
 })
 
+
+describe("sw.js as a per-app worker, scope <base>a/<app>/ (synthetic)", () => {
+  // Apps whose push config comes from qismo-api register the same file from
+  // /a/<app>/sw.js; the page writes their context under that scope.
+  const SCOPE = "/a/app1/"
+  const perApp = async (prefix = "/") => {
+    sw = await loadServiceWorker(SW_SOURCE, ORIGIN, `${prefix}a/app1/`)
+  }
+  const writeCtx = (ctx: typeof CTX | null, scope?: string) => writeSwContext(sw.indexedDB as unknown as IDBFactory, ctx, scope)
+
+  test("announces a reply from its own app's context; icons and the click target are the app's base, not the scope", async () => {
+    await perApp()
+    await writeCtx(CTX, SCOPE)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()).toHaveLength(1)
+    expect(visible()[0]!.options.icon).toBe("/img/pwa/icon-192.png")
+    expect(visible()[0]!.options.badge).toBe("/img/pwa/badge-96.png")
+    await sw.dispatch("notificationclick", { notification: { close() {}, data: visible()[0]!.options.data } })
+    expect(sw.opened).toEqual(["/widget.html?source=notification"])
+  })
+
+  test("a notification click focuses the open chat page (outside the worker's scope)", async () => {
+    await perApp()
+    sw.windows.push({ url: ORIGIN + "/widget.html?source=pwa", focused: false, visibilityState: "hidden" })
+    await sw.dispatch("notificationclick", { notification: { close() {} } })
+    expect(sw.focused).toEqual([ORIGIN + "/widget.html?source=pwa"])
+    expect(sw.opened).toEqual([])
+  })
+
+  test("ignores the root worker's context and another app's entry under its key", async () => {
+    await perApp()
+    await writeCtx(CTX) // root worker's key
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()).toEqual([])
+    await writeCtx({ ...CTX, appId: "other-app" }, SCOPE)
+    await push(fcmEnvelope(agentReply({ id: 9002 })))
+    expect(visible()).toEqual([])
+  })
+
+  test("the root worker ignores a per-app context", async () => {
+    await writeCtx(CTX, SCOPE)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()).toEqual([])
+  })
+
+  test("caches nothing and intercepts nothing; the root worker keeps the shell", async () => {
+    await perApp()
+    sw.cache.set("handoff-shell-v0", new Map())
+    await sw.dispatch("install", {})
+    await sw.dispatch("activate", {})
+    expect([...sw.cache.keys()]).toEqual(["handoff-shell-v0"])
+    const ev: any = { request: { url: ORIGIN + "/a/app1/anything", mode: "navigate", method: "GET" } }
+    await sw.dispatch("fetch", ev)
+    expect(ev.handled).toBe(false)
+  })
+
+  test("under a path prefix the app base is the prefix", async () => {
+    const PREFIX = "/api/v2/live_handover/w/"
+    await perApp(PREFIX)
+    await writeCtx(CTX, `${PREFIX}a/app1/`)
+    await push(fcmEnvelope(agentReply()))
+    expect(visible()[0]!.options.icon).toBe(`${PREFIX}img/pwa/icon-192.png`)
+    await sw.dispatch("notificationclick", { notification: { close() {} } })
+    expect(sw.opened).toEqual([`${PREFIX}widget.html?source=notification`])
+  })
+
+  test("ctxKey: root worker keeps the legacy key, a per-app worker uses its scope path", () => {
+    expect(ctxKey()).toBe(CTX_KEY)
+    expect(ctxKey(SCOPE)).toBe(SCOPE)
+  })
+})
