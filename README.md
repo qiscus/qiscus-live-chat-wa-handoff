@@ -280,6 +280,48 @@ reach the room through qismo-api (`POST /api/v2/internal/form/submissions`, BE P
 #2151); nothing else is needed here. The answers show in the same card as a WA
 Flow reply (MCF PR #2466): long questions wrap above their answers.
 
+## Share location in the room
+
+The customer can send a location from the room: composer → **Location** icon →
+bottom-sheet map (pin fixed in the centre, **Use current location** with a GPS
+accuracy indicator, **Send location**). It is the same feature as the
+multichannel-frontend Live Chat widget and the Flutter widget, with the same
+message: comment `type: "location"`, text `Sent Location`, payload
+`{latitude, longitude, name, address, map_url, accuracy}`.
+
+It is set **per app in the Omnichannel dashboard**, not here: the room reads
+`GET <qismo-api>/api/v2/share_location_config/<app_code>` (public, no auth)
+and shows the menu only when it answers `enabled: true`. Any failure hides the
+menu. `provider: "osm"` uses OpenStreetMap tiles and sends `"Location"` as
+name/address; `provider: "google"` uses the app's own Google key for the Map
+Tiles API and the Geocoding API. That key is visible in the browser by design:
+the client must restrict it in Google Cloud by HTTP referrer (see below) and
+enable only those two APIs.
+
+- **Which qismo-api host.** The one the invite was exchanged with: QismoFull
+  adds `base_url=<page baseUrl>` to the room URL, the room keeps it only when it
+  is in `src/client/origins.ts` `API_ORIGINS`, and the stored session keeps it
+  (`api`) for a resume. Missing or unknown host = menu hidden; the room still
+  starts. Sessions stored before this change resume without the menu until the
+  next invite. No Worker/container variable is needed: one deployment serves
+  several qismo lanes and regions.
+- **Geolocation.** QismoFull's room iframe and the resume iframe carry
+  `allow="geolocation"`. This Worker sends no `Permissions-Policy` header, so
+  the browser default applies (`self` plus delegation to the iframe). Do not
+  add `geolocation=(self)` on `widget.html`: it would block delegation to a
+  cross-origin room (`iframeUrl=https://omnichannel.qiscus.com`). If an ingress
+  adds a Permissions-Policy, it must not say `geolocation=()`. `widget.html`'s
+  CSP only restricts scripts; the room page has no CSP, so tiles
+  (`tile.openstreetmap.org`, `tile.googleapis.com`), `maps.googleapis.com` and
+  the config endpoint are not blocked. Current location needs HTTPS.
+- **Referrer seen by Google.** The room page sets `no-referrer`, but tile, Map
+  Tiles session and geocode requests use `strict-origin-when-cross-origin`, so
+  Google sees the room iframe's origin only: this deployment's host (e.g.
+  `https://live-widget.qiscus.com/`, staging
+  `https://live-widget-staging.qiscus.com/`), or the remote room's host when
+  `iframeUrl` points elsewhere. That is the referrer to allow on a restricted
+  key, next to the client's own MCF widget host.
+
 ## Develop and deploy
 
 Prerequisites: Bun for dependency installation/typechecking, Node.js for the

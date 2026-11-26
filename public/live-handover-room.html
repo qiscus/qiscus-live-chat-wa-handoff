@@ -18,7 +18,13 @@
         - SDK_BASE_URL (Blade: Config app.sdk_base_url) is the constant below;
         - title uses the default product name (no white-label config);
         - the OmniForm embed settings (Blade: _omniform-config) are injected by
-          src/worker.ts at the omniform-config marker below, from env.
+          src/worker.ts at the omniform-config marker below, from env;
+        - share location (Blade: _share-location-config, APP_URL) is set by the
+          script below as window.qiscusShareLocation = { baseUrl } before
+          QiscusSDK.render(): baseUrl is the qismo-api host of the exchange
+          (?base_url= from QismoFull, or the stored session on resume), checked
+          by handoff-room.js against src/client/origins.ts. One deployment
+          serves several qismo lanes/regions, so this is not a Worker env.
       Keep in sync with the Blade view when it changes.
     -->
     <link rel="stylesheet" href="../../../css/qiscus-sdk.3.2.12.css" />
@@ -269,6 +275,14 @@
                 return;
             }
 
+            // Share location (packages/qiscus-ui-vue src/lib/shareLocation.js):
+            // App.vue loads GET <qismo>/api/v2/share_location_config/<app_id>
+            // from this host and shows the Location menu only when it says
+            // enabled. Same qismo-api host the invite was exchanged with; an
+            // unknown or missing host leaves the feature off.
+            var shareLocationBase = room && room.apiOrigin ? room.apiOrigin(resumed) : null;
+            if (shareLocationBase) window.qiscusShareLocation = { baseUrl: shareLocationBase };
+
             bindMessageListener();
             attachCustomCss();
             initJoinRoom();
@@ -314,7 +328,7 @@
                                 // Identity verified upstream (verify_identity_token)
                                 // and the room loaded with that login: only now is
                                 // the login worth keeping for resume.
-                                if (!resumeMode && room) room.persistLogin(app_id, roomId, userData, qiscusBaseUrl);
+                                if (!resumeMode && room) room.persistLogin(app_id, roomId, userData, qiscusBaseUrl, shareLocationBase);
                                 sendMessage({ event_name: 'qiscus:session-ready', data: { room_id: roomId } });
                             }, function () {
                                 if (resumeMode) {

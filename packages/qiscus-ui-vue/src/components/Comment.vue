@@ -170,13 +170,9 @@
                     :isMe="isMe")
 
                 //- CommentType: "location"
-                static-map(:lat="comment.payload.latitude"
-                  :lng="comment.payload.longitude"
-                  :name="comment.payload.name"
-                  :mapkey="core.googleMapKey"
-                  :message="comment.message"
-                  :mapurl="comment.payload.map_url"
-                  v-if="comment.type == 'location'")
+                comment-location(v-if="comment.type == 'location'"
+                  :comment="comment"
+                  :config="shareLocationConfig")
 
                 span(class="qcw-comment__time qcw-comment__time--children hidden-sm"
                   v-if="!isParent"
@@ -191,13 +187,9 @@
 
             div(v-else style="width: 100%;")
               //- CommentType: "location"
-              static-map(:lat="comment.payload.latitude"
-                :lng="comment.payload.longitude"
-                :name="comment.payload.name"
-                :mapkey="core.googleMapKey"
-                :message="comment.message"
-                :mapurl="comment.payload.map_url"
-                v-if="comment.type == 'location'")
+              comment-location(v-if="comment.type == 'location'"
+                :comment="comment"
+                :config="shareLocationConfig")
 
               //- CommentType: "contact_person"
               comment-contact(v-if="comment.type == 'contact_person'"
@@ -491,7 +483,7 @@ import { attachmentUrl, attachmentCaption } from '../lib/attachmentTag';
 import { scrollListToElement } from '../lib/utils';
 import Avatar from "./Avatar";
 import Icon from "./Icon";
-import StaticMap from "./StaticMap";
+import CommentLocation from "./CommentLocation";
 import ImageLoader from "./ImageLoader";
 import FileAttachment from "./FileAttachment";
 import CommentRender from "./CommentRender";
@@ -547,7 +539,7 @@ export default {
   components: {
     Avatar,
     Icon,
-    StaticMap,
+    CommentLocation,
     ImageLoader,
     FileAttachment,
     CommentRender,
@@ -599,6 +591,11 @@ export default {
   ],
   directives: { clickOutside },
   computed: {
+    // Map provider for location bubbles (OSM when the page has no config).
+    shareLocationConfig() {
+      const ui = this.core && this.core.UI;
+      return (ui && ui.shareLocation && ui.shareLocation.config) || null;
+    },
     // OmniForm answers carried by this message (see ../lib/omniForm.js), else
     // null and the message shows as its plain-text fallback.
     omniFormAnswer() {
