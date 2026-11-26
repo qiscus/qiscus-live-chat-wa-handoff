@@ -18,7 +18,7 @@
         )
           div(class="qcw-comment__message"
             :style="messageStyle"
-            :class="{'message__image': isMeFileImageAttachment,'message__bot': isReplayBot,'extra-margin carousel': comment.type === 'carousel','sticker':isSticker  && !isStickerAds,'card':comment.type === 'card','hover-effect':!isDeleted && !isCustomBuble && !isSticker, 'qcw-comment-prevsession':isPreviousSessionMessageNotifier, 'message__broadcast_button' : isMessageButtonBc, 'message__broadcast_button--with-sender' : isMessageButtonBc && broadcasterName, 'message__flow_interactive' : isMessageFlowInteractive ||  isInteractiveCtaUrl, 'message__request_contact_button' : isRequestContactButton }")
+            :class="{'message__image': isMeFileImageAttachment,'message__bot': isReplayBot,'extra-margin carousel': comment.type === 'carousel','sticker':isSticker  && !isStickerAds,'card':comment.type === 'card','hover-effect':!isDeleted && !isCustomBuble && !isSticker, 'qcw-comment-prevsession':isPreviousSessionMessageNotifier, 'message__broadcast_button' : isMessageButtonBc, 'message__broadcast_button--with-sender' : isMessageButtonBc && broadcasterName, 'message__flow_interactive' : isMessageFlowInteractive ||  isInteractiveCtaUrl || !!nativeForm, 'message__request_contact_button' : isRequestContactButton }")
 
             //- Only for buble tip, for supporting js styling
             // div.tip(
@@ -126,6 +126,19 @@
                     icon(name="ic-double-check" class="ic-double-check__state" :fill="messageStatusIconStyle")
                 div(class="qcw-comment__state qcw-comment__state--read" v-if="!comment.isChannel && comment.status=='read'")
                     icon(name="ic-double-check" class="ic-double-check__state")
+
+            //- Live Chat native form (extras.sub_type "form"); an invalid form
+            //- parses to null and falls through to the plain message text.
+            div(v-else-if="nativeForm" style="width: 100%;")
+              comment-native-form(
+                :form="nativeForm"
+                :fallback-text="comment.message || ''"
+                :status="nativeFormStatus || null"
+                :read-only="isMe"
+                :labels="nativeFormLabels"
+                :brand-color="core.UI.colors && core.UI.colors.bubleRightColor"
+                @open="onNativeFormOpen")
+              span(v-if="isInboxMode" class="qcw-comment__time") {{comment.time}}
 
             //- from fb ads
             div(v-else-if="isFbAdsComment")
@@ -413,7 +426,7 @@
                 comment-render(
                   :comment="comment"
                   :text="comment.message"
-                  v-if="!comment.isAttachment(comment.message) && comment.type=='text' && !isSticker && !isFlowResponse() && !omniFormAnswer"
+                  v-if="!comment.isAttachment(comment.message) && comment.type=='text' && !isSticker && !isFlowResponse() && !omniFormAnswer && !nativeFormAnswer"
                   :class="{'comment-text__interactive': comment.extras.interactive}")
 
                 comment-order(:order="comment.extras.order" v-if="comment.extras.order && comment.extras.order.catalog_id")
@@ -425,6 +438,9 @@
 
                 //- OmniForm answers (nfm_reply name "omniform", posted by qismo-api)
                 comment-omni-form-answer(v-if="omniFormAnswer" :answer="omniFormAnswer" :attachments-label="omniFormAttachmentsLabel" :mask-values="!!(core && core.UI && core.UI.maskFlowResponse)")
+
+                //- Native form answers (nfm_reply name "form", sent by this widget)
+                comment-omni-form-answer(v-if="nativeFormAnswer" source="form" :answer="nativeFormAnswer" :mask-values="!!(core && core.UI && core.UI.maskFlowResponse)")
 
               div(class="comment-text" v-if="comment.type == 'text' && isPreviousSessionMessageNotifier")
                 image-loader(v-if="comment.isAttachment(comment.message)"
@@ -520,6 +536,13 @@ import CommentCtaInteractive from "./CommentCtaInteractive.vue";
 import CommentRequestContact from "./CommentRequestContact.vue";
 import CommentOmniFormAnswer from './CommentOmniFormAnswer';
 import { omniFormConfig, omniFormLabel, parseOmniFormAnswer } from '../lib/omniForm';
+import CommentNativeForm from './CommentNativeForm';
+import {
+  isNativeFormAnswerExtras,
+  nativeFormConfig,
+  parseNativeForm,
+  parseNativeFormAnswer,
+} from '../lib/nativeForm';
 import {
   maskSystemEventAgentName,
   renderSystemEventHtml,
@@ -573,7 +596,8 @@ export default {
     CommentFlowInteractive,
     CommentCtaInteractive,
     CommentRequestContact,
-    CommentOmniFormAnswer
+    CommentOmniFormAnswer,
+    CommentNativeForm,
   },
   props: [
     "comment",
@@ -595,7 +619,9 @@ export default {
     "isInteractiveCallPermissionRequest",
     "isOutgoingCall",
     "isContactCard",
-    "isInteractiveCtaUrl"
+    "isInteractiveCtaUrl",
+    'isNativeForm',
+    'nativeFormStatus',
   ],
   directives: { clickOutside },
   computed: {
@@ -609,6 +635,26 @@ export default {
       if (!answer && this.core && this.core.UI && this.core.UI.maskFlowResponse &&
           interactive.type === 'nfm_reply' && interactive.nfm_reply &&
           interactive.nfm_reply.name === 'omniform') {
+        return { formName: '', fields: [{ label: '', value: '********' }], attachments: [] };
+      }
+      return answer;
+    },
+    // Live Chat native form carried by this message (see ../lib/nativeForm.js),
+    // else null and the message shows as its plain-text fallback.
+    nativeForm() {
+      if (!this.isNativeForm || !this.comment) return null;
+      return parseNativeForm(this.comment.extras);
+    },
+    nativeFormLabels() {
+      return nativeFormConfig(this.core && this.core.UI).labels;
+    },
+    // Native form answers (nfm_reply name "form"). `message` only holds the
+    // form title; invalid data is still masked like OmniForm.
+    nativeFormAnswer() {
+      if (!this.comment) return null;
+      const answer = parseNativeFormAnswer(this.comment.extras);
+      if (!answer && this.core && this.core.UI && this.core.UI.maskFlowResponse &&
+          isNativeFormAnswerExtras(this.comment.extras)) {
         return { formName: '', fields: [{ label: '', value: '********' }], attachments: [] };
       }
       return answer;
@@ -937,7 +983,7 @@ export default {
     isMeFileImageAttachment() {
       // The structured answer's fallback includes upload URLs, but the whole
       // message is still a form reply, not a standalone image attachment.
-      if (this.omniFormAnswer) return false;
+      if (this.omniFormAnswer || this.nativeFormAnswer) return false;
       const payload = this.comment.payload || {};
       // A caption also rides after the closing tag on a plain-text
       // `[file]url[/file] caption` send — that bubble keeps its background.
@@ -1119,6 +1165,11 @@ export default {
         .then((res) => {
           this.core.options.sentMessageCallback(res);
         });
+    },
+    // Native form CTA: the sheet lives in ChatWindow (via CommentList).
+    onNativeFormOpen(opener) {
+      if (this.isMe) return;
+      this.$emit('native-form-open', this.comment, opener);
     },
     // WA interactive list row picked in the widget: send it the way qismo-api
     // stores a WhatsApp `list_reply` (text = row title, id in extras), so the
