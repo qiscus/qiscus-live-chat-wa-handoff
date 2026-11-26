@@ -189,3 +189,30 @@ describe("HEAD", () => {
     }
   })
 })
+
+describe("per-app service worker /a/:appCode/sw.js (Bun container)", () => {
+  test("the same public/sw.js, scoped to the app, never cached", async () => {
+    const res = await get("/a/app_1-X/sw.js")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("service-worker-allowed")).toBe("/a/app_1-X/")
+    expect(res.headers.get("cache-control")).toBe("no-cache")
+    expect(res.headers.get("content-type")).toContain("javascript")
+    expect(await res.text()).toBe(await Bun.file(join(PUBLIC_DIR, "sw.js")).text())
+  })
+
+  test("compressed like other Hono responses, still the plain file inside (no 304 from the static ETag)", async () => {
+    const staticEtag = (await get("/sw.js")).headers.get("etag")!
+    const res = await get("/a/app1/sw.js", { "Accept-Encoding": "br", "If-None-Match": staticEtag })
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-encoding")).toBe("br")
+    expect(brotliDecompressSync(new Uint8Array(await res.arrayBuffer())).toString()).toBe(await Bun.file(join(PUBLIC_DIR, "sw.js")).text())
+  })
+
+  test("404 for an invalid app code", async () => {
+    for (const path of ["/a/bad.code/sw.js", `/a/${"x".repeat(65)}/sw.js`, "/a/a%20b/sw.js", "/a//sw.js"]) {
+      const res = await get(path)
+      expect(res.status).toBe(404)
+      expect(res.headers.get("service-worker-allowed")).toBeNull()
+    }
+  })
+})

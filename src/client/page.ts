@@ -74,7 +74,7 @@ function boot(): void {
   // Push + resume are optional: if they fail to start, the page still chats.
   let push: HandoffPushApi | null = null
   try {
-    push = start({ iframeUrl: env.iframeUrl, sdkBaseUrl: env.sdkBaseUrl })
+    push = start({ iframeUrl: env.iframeUrl, sdkBaseUrl: env.sdkBaseUrl, baseUrl: env.baseUrl })
   } catch (e) {
     debug("push not started", String(e))
   }

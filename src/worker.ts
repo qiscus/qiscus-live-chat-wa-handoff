@@ -14,13 +14,14 @@
  *
  * This Worker itself only serves `/` (a landing note), the handoff room at
  * `/iframes/v5/:app_code/live-handover-room`, `GET /push/config` (public FCM
- * web config for the push opt-in, see README) and static assets
+ * web config for the push opt-in, see README), the per-app service worker
+ * `GET /a/:appCode/sw.js` and static assets
  * (`/widget.html`, `/sw.js`, `/manifest.webmanifest`, `/js/*`, `/css/*`,
  * `/img/*`). It sends no push and holds no secrets.
  */
 import { Hono } from "hono"
 import { OMNIFORM_MARKER, type OmniformEnv, omniformScript, readOmniformConfig } from "./omniform-config"
-import { type PushEnv, readPushConfig } from "./push/config"
+import { type PushEnv, isAppCode, readPushConfig } from "./push/config"
 
 type Bindings = { ASSETS: Fetcher } & PushEnv & OmniformEnv
 
@@ -33,6 +34,31 @@ const app = new Hono<{ Bindings: Bindings }>()
 app.get("/push/config", (c) => {
   c.header("Cache-Control", "no-store")
   return c.json(readPushConfig(c.env))
+})
+
+// Per-app service worker: the same public/sw.js, served from the app's own
+// path so it registers with scope /a/<appCode>/. A push subscription belongs to
+// one registration (one Firebase project, one VAPID key), so each app whose
+// push config comes from qismo-api gets its own and two apps in one browser
+// never overwrite each other's. Never cached, like /sw.js (the page registers
+// with updateViaCache "none").
+app.get("/a/:appCode/sw.js", async (c) => {
+  const appCode = c.req.param("appCode")
+  if (!isAppCode(appCode)) return c.text("Not found", 404)
+  const url = new URL(c.req.url)
+  url.pathname = "/sw.js"
+  url.search = ""
+  // The plain file: no encoded body or 304 from the asset layer (see the room route).
+  const asset = await c.env.ASSETS.fetch(new Request(url, { method: "GET" }))
+  if (!asset.ok) return c.text("Not found", 404)
+  return new Response(c.req.method === "HEAD" ? null : await asset.text(), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Service-Worker-Allowed": `/a/${appCode}/`,
+    },
+  })
 })
 
 app.get("/", (c) => {

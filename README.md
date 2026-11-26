@@ -88,7 +88,11 @@ credential.
 customer clicks "Aktifkan notifikasi" (explicit opt-in, top page)
   -> Notification permission
   -> FCM web token: firebase/messaging getToken() with the PUBLIC Firebase web
-     config + VAPID public key from GET /push/config, minted against /sw.js
+     config (+ VAPID public key when there is one) of this app:
+       qismo-api GET /api/v2/live_handover/push_config?app_code=<app>
+         -> minted against /a/<app>/sw.js (scope /a/<app>/)
+       otherwise this deployment's env, GET /push/config
+         -> minted against /sw.js (scope /)
   -> POST <sdkBaseUrl, default https://api3.qiscus.com>/api/v2/sdk/set_user_device_token
        {device_token, device_platform: "web", is_development: false}
      authenticated as the handoff CUSTOMER (their own SDK session)
@@ -112,7 +116,53 @@ agent replies in the Omnichannel dashboard
   or the Omnichannel mobile-PN activation, which uploads Qiscus's own
   `mulchanfcm.json`). Otherwise the token registers but never delivers.
 
-### Required configuration (public values, names only)
+### Per-app config from qismo-api
+
+Each Qiscus app can bring its own Firebase project. Once the app code is known
+(from the invite exchange, or from the stored session on a resume), the page
+asks qismo-api:
+
+```text
+GET {baseUrl}/api/v2/live_handover/push_config?app_code=<app>   credentials omitted, 4 s timeout
+200 {"status":"configured","firebase":{apiKey,authDomain?,projectId,messagingSenderId,appId},"vapidKey"?:"..."}
+200 {"status":"unconfigured"}        400 {"status":"invalid"}
+```
+
+- `baseUrl` is the page's own validated qismo origin (the `origins.ts` exact
+  allowlist, re-checked before the request) or, on a resume, the origin stored
+  with the session (`api` in `qiscus-handoff:session:v1`, stamped when the
+  invite was exchanged): a notification click or a Home Screen launch has no
+  `baseUrl` in its URL. Never a raw query value.
+- The answer is validated with the same rules as the env below
+  (`src/push/config.ts`). A valid `configured` answer **wins** over the env for
+  that app and counts as enabled (no `PUSH_APP_CODES` entry needed).
+  Anything else (unconfigured, 400, 5xx, timeout, network error, a malformed
+  field) falls back to the env exactly as before.
+- `vapidKey` is optional: without it `getToken` is called without `vapidKey`
+  and Firebase uses its default key. Firebase notes some push services (e.g.
+  Chrome) may need the project's own key; the dashboard asks for it as an
+  optional field. Not verified here.
+- **One service worker per app.** An app with qismo-api config registers
+  `GET /a/<app>/sw.js` (the same `public/sw.js`, served by the Hono app, so by
+  the Worker and the Bun container alike; `Service-Worker-Allowed: /a/<app>/`,
+  `Cache-Control: no-cache`, 404 for a code outside `^[A-Za-z0-9_-]{1,64}$`)
+  with scope `/a/<app>/`. A push subscription belongs to one registration, so
+  two apps with different Firebase projects in one browser never overwrite
+  each other's. That worker caches nothing and controls no page; it reads only
+  its own app's context and a click opens `/widget.html?source=notification`
+  like the root worker. Env-config apps keep the root `/sw.js` as before.
+- **Moving between scopes.** The stored registration remembers its scope. When
+  an app's config source changes (env -> qismo-api or back), the next load
+  with a session (refresh, notification click, Home Screen) mints a token in
+  the new scope, registers it, removes the old token upstream
+  (`remove_user_device_token` with the customer's own credentials),
+  unsubscribes the old scope's push subscription and clears that worker's
+  context, so the old subscription cannot deliver a second copy. Teardown
+  always uses the scope stored with the registration, not today's config.
+- qismo-api answers with `Cache-Control: public, max-age=300`, so a config
+  change can take up to 5 minutes to reach a browser that just asked.
+
+### Env configuration (fallback; public values, names only)
 
 Set these in the environment when running `alchemy deploy`. Each one that is
 set is bound to the Worker as `plain_text`. None of them is secret: they are the
@@ -128,15 +178,17 @@ or in the Worker.
 | `FIREBASE_APP_ID`              | same (`1:<number>:web:<hex>`)                                         |
 | `FIREBASE_VAPID_KEY`           | Project settings → Cloud Messaging → Web Push certificates (public key) |
 | `FIREBASE_AUTH_DOMAIN`         | optional                                                              |
-| `PUSH_APP_CODES`               | optional, comma-separated Qiscus app codes allowed to enable push     |
+| `PUSH_APP_CODES`               | optional, comma-separated Qiscus app codes allowed to enable push with THIS config (apps with qismo-api config do not need it) |
 | `PUSH_ROOM_ORIGINS`            | optional, TEMPORARY: comma-separated origins of a cross-origin room iframe for which push is still allowed (see Limitations) |
 
-If any required value is missing or malformed, push stays off. `GET
+If any required value is missing or malformed, the env config is off (apps with
+a qismo-api config still work). `GET
 /push/config` returns `{"status":"unconfigured","missing":[…],"invalid":[…]}`
 (names only), and the page logs the same to the console. No new Cloudflare
 resource or storage binding is needed.
 
-**Console trail.** Every reason push stays off (`unconfigured`,
+**Console trail.** `push config` names the source per app (qismo-api or worker
+env, VAPID custom/default). Every reason push stays off (`unconfigured`,
 `cross-origin-room`, `app-not-enabled`, `unsupported`) is logged with
 `console.info("[handoff-push] …")`. Each step (start, exchange seen, state
 changes, permission, FCM token, `set_user_device_token` status, service worker
@@ -145,8 +197,9 @@ level in DevTools. No token, e-mail or message text is ever logged.
 
 ### Service worker updates
 
-The page registers `/sw.js` with `updateViaCache: "none"` and calls
-`registration.update()` when it becomes visible again (at most every 30
+The page registers `/sw.js` (and `/a/<app>/sw.js` for an app with qismo-api
+config) with `updateViaCache: "none"` and calls `registration.update()` on each
+when it becomes visible again (at most every 30
 minutes); the browser also re-checks on every navigation. A changed `sw.js`
 installs with `skipWaiting()` and takes over with `clients.claim()`, without
 waiting for tabs to close. The shell (offline page, manifest, icons) is
@@ -204,8 +257,8 @@ is put in a URL, the manifest or a cache.
   Anda". It is plain DOM in this browser: never sent with `sendComment`, never
   stored in Omnichannel, invisible to the agent. With a cross-origin room
   (`omnichannel.qiscus.com`) the page cannot touch the frame, so the same
-  content is shown as a floating banner instead. For apps in
-  `PUSH_APP_CODES` the page moves a first invite's room from the default
+  content is shown as a floating banner instead. For apps with a qismo-api
+  push config, or in `PUSH_APP_CODES`, the page moves a first invite's room from the default
   `omnichannel.qiscus.com` to this origin (same path and query; the remote
   frame is held on `about:blank` until `/push/config` answers, so it never
   spends the identity token), so the bubble also shows on the first visit,
@@ -248,10 +301,15 @@ is put in a URL, the manifest or a cache.
 end-to-end test `e2e/pwa.browser.test.ts`. Everything external is
 **synthetic**: the qismo exchange and the api3 SDK REST are in-test fakes
 (single-use identity tokens, SDK-token auth, room membership). A stub stands in
-for the Qiscus SDK inside the room. FCM token minting is replaced through a
-localhost-only seam (`window.__HANDOFF_PUSH_TEST__`), and pushes are injected
-into the real service worker via CDP. No real Qiscus app, Firebase project, FCM
-or Flash was exercised.
+for the Qiscus SDK inside the room, and qismo-api's `push_config` is a fake
+answer. FCM token minting is replaced through a localhost-only seam
+(`window.__HANDOFF_PUSH_TEST__`), and pushes are injected into the real service
+workers (root and `/a/<app>/`) via CDP. No real Qiscus app, Firebase project,
+FCM or Flash was exercised, so neither Firebase's default VAPID key nor a real
+push subscription's unsubscribe was. Without Google Chrome, point `CHROME_PATH`
+at a Chromium (e.g. Playwright's `Google Chrome for Testing`); its headless
+focus emulation reports every page as focused, which makes one step of the
+"full flow" test fail there (the open chat page suppresses the notification).
 
 ### Rebuilding the browser bundles
 

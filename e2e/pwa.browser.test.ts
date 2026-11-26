@@ -937,4 +937,247 @@ run("PWA + push on the hosted handoff page (SYNTHETIC, headless Chrome)", () => 
     },
     60_000,
   )
+
+  // ---------------------------------------------------- per-app push config
+  // qismo-api's GET /api/v2/live_handover/push_config (CONTRACT.md) is a fake
+  // here too. The FCM seam records which worker scope and config it was given.
+
+  const BACKEND_FIREBASE = {
+    apiKey: "AIza" + "B".repeat(35),
+    projectId: "synthetic-backend",
+    messagingSenderId: "222222222222",
+    appId: "1:222222222222:web:0123456789abcdef",
+  }
+  const SCOPE_SEAM = `window.__HANDOFF_PUSH_TEST__.fcm.getToken = async (cfg, reg) => {
+    const scope = new URL(reg.scope).pathname;
+    window.__fcmMints = (window.__fcmMints || []).concat([{ scope, active: !!reg.active, hasVapid: 'vapidKey' in cfg, projectId: cfg.firebase.projectId }]);
+    return 'synthetic-fcm-' + (scope === '/' ? 'root' : 'app') + '-' + 'A'.repeat(120);
+  };`
+
+  async function routePushConfig(ctx: BrowserContext, api: string, configured: () => boolean, seen: string[]) {
+    await ctx.route(`${api}/api/v2/live_handover/push_config**`, (route) => {
+      seen.push(route.request().url())
+      return configured()
+        ? cors(route, 200, { status: "configured", firebase: BACKEND_FIREBASE })
+        : cors(route, 200, { status: "unconfigured" })
+    })
+  }
+
+  const swContextEntries = (page: Page) =>
+    page.evaluate(
+      () =>
+        new Promise<Record<string, unknown>>((resolve) => {
+          const req = indexedDB.open("qiscus-handoff-push", 1)
+          req.onupgradeneeded = () => req.result.createObjectStore("ctx")
+          req.onsuccess = () => {
+            const out: Record<string, unknown> = {}
+            const cur = req.result.transaction("ctx", "readonly").objectStore("ctx").openCursor()
+            cur.onsuccess = () => {
+              const c = cur.result
+              if (!c) {
+                req.result.close()
+                return resolve(out)
+              }
+              out[String(c.key)] = c.value
+              c.continue()
+            }
+          }
+        }),
+    )
+
+  /** Registration ids by scope URL, from ONE ServiceWorker.enable (a second enable re-emits nothing). */
+  async function registrationIdsFor(cdp: CDPSession, scopeURLs: string[]): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const found = new Map<string, string>()
+      const t = setTimeout(() => reject(new Error(`no SW registration for ${scopeURLs.filter((s) => !found.has(s))}`)), 10_000)
+      cdp.on("ServiceWorker.workerRegistrationUpdated", (e: { registrations: { registrationId: string; scopeURL: string; isDeleted: boolean }[] }) => {
+        for (const r of e.registrations) if (!r.isDeleted && scopeURLs.includes(r.scopeURL)) found.set(r.scopeURL, r.registrationId)
+        if (scopeURLs.every((s) => found.has(s))) {
+          clearTimeout(t)
+          resolve(scopeURLs.map((s) => found.get(s)!))
+        }
+      })
+      void cdp.send("ServiceWorker.enable")
+    })
+  }
+
+  const notificationsOf = (viewer: Page, scopeURL: string) =>
+    viewer.evaluate(async (s) => {
+      const reg = (await navigator.serviceWorker.getRegistrations()).find((r) => r.scope === s)
+      return reg ? (await reg.getNotifications()).map((n) => ({ body: n.body, tag: n.tag })) : null
+    }, scopeURL)
+
+  test(
+    "per-app config from qismo-api wins over env (app not in PUSH_APP_CODES), default VAPID, own /a/<app>/ worker; a resume asks the stored lane",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "other-app" })
+      const LANE = "https://qismo-stag4.qiscus.io"
+      const asked: string[] = []
+      const ctx = await newContext({ grant: true })
+      try {
+        upstream.reset()
+        await ctx.addInitScript(SCOPE_SEAM)
+        await ctx.route(`${LANE}/**`, fakeQismo)
+        await routePushConfig(ctx, LANE, () => true, asked)
+        await ctx.route("https://qismo.qiscus.com/api/v2/live_handover/push_config**", (r) => {
+          asked.push(r.request().url())
+          return cors(r, 200, { status: "unconfigured" })
+        })
+        const page = await ctx.newPage()
+        await page.goto(`${ORIGIN}/widget.html?${new URLSearchParams({ baseUrl: LANE, iframeUrl: ORIGIN })}#t=synthetic-invite-A`)
+        await waitPushState(page, "offer")
+        expect(asked).toEqual([`${LANE}/api/v2/live_handover/push_config?app_code=synthapp`])
+        expect(JSON.parse((await stored(page, SESSION_KEY))!).api).toBe(LANE)
+
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(await page.evaluate(() => (window as any).__fcmMints)).toEqual([
+          { scope: "/a/synthapp/", active: true, hasVapid: false, projectId: "synthetic-backend" },
+        ])
+        expect(JSON.parse((await stored(page, REG_KEY))!)).toMatchObject({ scope: "/a/synthapp/", appId: "synthapp" })
+        expect(upstream.deviceCalls.map((c) => [c.path, String(c.body.device_token).slice(0, 18)])).toEqual([["set_user_device_token", "synthetic-fcm-app-"]])
+        const ctxEntries = await swContextEntries(page)
+        expect(Object.keys(ctxEntries)).toEqual(["/a/synthapp/"])
+        expect(ctxEntries["/a/synthapp/"]).toMatchObject({ appId: "synthapp", roomId: "500" })
+
+        // a push into the per-app worker, chat page closed
+        const viewer = await ctx.newPage()
+        await viewer.goto(`${ORIGIN}/offline.html`)
+        const cdp = await ctx.newCDPSession(viewer)
+        const [appReg] = await registrationIdsFor(cdp, [`${ORIGIN}/a/synthapp/`])
+        expect(ctx.serviceWorkers().some((w) => w.url() === `${ORIGIN}/a/synthapp/sw.js`)).toBe(true)
+        await page.close()
+        await cdp.send("ServiceWorker.deliverPushMessage", {
+          origin: ORIGIN,
+          registrationId: appReg,
+          data: sdkPush({ id: 21, room_id: 500, type: "text", message: "per-app reply", email: "agent@example.invalid" }),
+        })
+        await viewer.waitForTimeout(700)
+        expect(await notificationsOf(viewer, `${ORIGIN}/a/synthapp/`)).toEqual([{ body: "per-app reply", tag: "handoff-500-21" }])
+
+        // notification click / Home Screen launch: no baseUrl in the URL, the
+        // config still comes from the lane stored with the session
+        asked.length = 0
+        const resumed = await ctx.newPage()
+        await resumed.goto(`${ORIGIN}/widget.html?source=notification`)
+        await waitPushState(resumed, "enabled")
+        expect(asked).toEqual([`${LANE}/api/v2/live_handover/push_config?app_code=synthapp`])
+        expect(upstream.deviceCalls).toHaveLength(1) // same token, no re-registration
+      } finally {
+        await ctx.close()
+        await configurePush(true)
+      }
+    },
+    90_000,
+  )
+
+  test(
+    "first invite, explicit remote room, app enabled only by qismo-api config: room moves to this origin",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "other-app" })
+      const ctx = await newContext({ grant: true })
+      try {
+        let remoteHits = 0
+        await ctx.route("https://omnichannel.qiscus.com/**", (r) => {
+          remoteHits++
+          return r.fulfill({ status: 200, contentType: "text/html", body: REMOTE_ROOM })
+        })
+        await routePushConfig(ctx, "https://qismo.qiscus.com", () => true, [])
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A", false))
+        await waitPushState(page, "offer")
+        expect(new URL((await page.locator("#qcw-iframe").getAttribute("src"))!).origin).toBe(ORIGIN)
+        expect(remoteHits).toBe(0)
+      } finally {
+        await ctx.close()
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "qismo-api failing: env behaviour unchanged (app gate from PUSH_APP_CODES)",
+    async () => {
+      await configurePush(true, { PUSH_APP_CODES: "other-app" })
+      const ctx = await newContext({ grant: true })
+      try {
+        await ctx.route("https://qismo.qiscus.com/api/v2/live_handover/push_config**", (r) => cors(r, 500, { error: "synthetic" }))
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A"))
+        await waitPushState(page, "app-not-enabled")
+      } finally {
+        await ctx.close()
+        await configurePush(true)
+      }
+    },
+    60_000,
+  )
+
+  test(
+    "migration: a root-scope (env) registration moves to /a/<app>/ when qismo-api starts serving the app; the root one stops announcing",
+    async () => {
+      await configurePush(true)
+      let backend = false
+      const ctx = await newContext({ grant: true })
+      try {
+        upstream.reset()
+        await ctx.addInitScript(SCOPE_SEAM)
+        await routePushConfig(ctx, "https://qismo.qiscus.com", () => backend, [])
+        const page = await ctx.newPage()
+        await page.goto(invite("synthetic-invite-A"))
+        await waitPushState(page, "offer")
+        await page.getByRole("button", { name: "Aktifkan notifikasi" }).click()
+        await waitPushState(page, "enabled")
+        expect(JSON.parse((await stored(page, REG_KEY))!).scope).toBeUndefined()
+        expect(Object.keys(await swContextEntries(page))).toEqual(["current"])
+
+        // qismo-api now has this app's config; the next load (a resume) moves it
+        backend = true
+        const debugLines: string[] = []
+        page.on("console", (m) => {
+          if (m.type() === "debug") debugLines.push(m.text())
+        })
+        await page.goto(`${ORIGIN}/widget.html?source=notification`)
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("qiscus-handoff:push-registration:v1") || "{}").scope === "/a/synthapp/", null, {
+          timeout: 15_000,
+        })
+        await waitPushState(page, "enabled")
+        expect(upstream.deviceCalls.map((c) => [c.path, String(c.body.device_token).slice(0, 19)])).toEqual([
+          ["set_user_device_token", "synthetic-fcm-root-"],
+          ["set_user_device_token", "synthetic-fcm-app-A"],
+          ["remove_user_device_token", "synthetic-fcm-root-"],
+        ])
+        const entries = await swContextEntries(page)
+        expect(Object.keys(entries)).toEqual(["/a/synthapp/"]) // root context cleared
+        expect(debugLines.some((l) => l.includes("push subscription moved"))).toBe(true)
+        expect(debugLines.some((l) => l.includes("push subscription removed"))).toBe(true)
+
+        // a push still arriving at the root worker is not announced; the per-app one is
+        const viewer = await ctx.newPage()
+        await viewer.goto(`${ORIGIN}/offline.html`)
+        const cdp = await ctx.newCDPSession(viewer)
+        const [rootReg, appReg] = await registrationIdsFor(cdp, [`${ORIGIN}/`, `${ORIGIN}/a/synthapp/`])
+        await page.close()
+        const reply = sdkPush({ id: 31, room_id: 500, type: "text", message: "after move", email: "agent@example.invalid" })
+        await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId: rootReg, data: reply })
+        await cdp.send("ServiceWorker.deliverPushMessage", { origin: ORIGIN, registrationId: appReg, data: reply })
+        await viewer.waitForTimeout(700)
+        expect(await notificationsOf(viewer, `${ORIGIN}/`)).toEqual([])
+        expect(await notificationsOf(viewer, `${ORIGIN}/a/synthapp/`)).toEqual([{ body: "after move", tag: "handoff-500-31" }])
+      } finally {
+        await ctx.close()
+        await configurePush(true)
+      }
+    },
+    90_000,
+  )
+
+  test("GET /a/:appCode/sw.js through the Worker: scoped header, no-cache, 404 for a bad code", async () => {
+    const ok = await fetch(`${ORIGIN}/a/synthapp/sw.js`)
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get("service-worker-allowed")).toBe("/a/synthapp/")
+    expect(ok.headers.get("cache-control")).toBe("no-cache")
+    expect((await fetch(`${ORIGIN}/a/bad.code/sw.js`)).status).toBe(404)
+  })
 })

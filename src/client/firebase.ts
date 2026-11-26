@@ -5,23 +5,30 @@
  * does not pay for Firebase otherwise.
  *
  * Only the public web-app config + VAPID public key are used. The token is
- * minted against OUR service worker (/sw.js); Firebase's own
- * firebase-messaging-sw.js is never registered.
+ * minted against OUR service worker: /sw.js for the Worker env config, or
+ * /a/<app>/sw.js for an app whose config comes from qismo-api (the registration
+ * passed in). Firebase's own firebase-messaging-sw.js is never registered.
+ * A per-app config may come without a VAPID key: getToken then runs without
+ * `vapidKey` and Firebase uses its default key.
  */
 import { type FirebaseApp, getApps, initializeApp } from "firebase/app"
 import { getId, getInstallations } from "firebase/installations"
-import { getMessaging, getToken as fbGetToken, isSupported } from "firebase/messaging"
+import { type GetTokenOptions, getMessaging, getToken as fbGetToken, isSupported } from "firebase/messaging"
 import type { ConfiguredPushConfig } from "./controller"
 
 const APP_NAME = "qiscus-handoff"
 
+/** One Firebase app per web app: different apps on this origin may use different projects. */
 function app(cfg: ConfiguredPushConfig): FirebaseApp {
-  const existing = getApps().find((a) => a.name === APP_NAME)
-  if (existing) {
-    const o = existing.options
-    if (o.projectId === cfg.firebase.projectId && o.appId === cfg.firebase.appId) return existing
-  }
-  return initializeApp(cfg.firebase, existing ? `${APP_NAME}-${Date.now()}` : APP_NAME)
+  const ours = getApps().filter((a) => a.name === APP_NAME || a.name.startsWith(`${APP_NAME}-`))
+  const same = ours.find((a) => a.options.projectId === cfg.firebase.projectId && a.options.appId === cfg.firebase.appId)
+  if (same) return same
+  return initializeApp(cfg.firebase, ours.length ? `${APP_NAME}-${Date.now()}` : APP_NAME)
+}
+
+/** getToken options: `vapidKey` only when the config has one (else Firebase's default key). */
+export function tokenOptions(cfg: Pick<ConfiguredPushConfig, "vapidKey">, registration: ServiceWorkerRegistration): GetTokenOptions {
+  return cfg.vapidKey ? { vapidKey: cfg.vapidKey, serviceWorkerRegistration: registration } : { serviceWorkerRegistration: registration }
 }
 
 async function messaging(cfg: ConfiguredPushConfig) {
@@ -87,7 +94,7 @@ export async function getToken(cfg: ConfiguredPushConfig, registration: ServiceW
   // Firebase Installation first: same call getToken makes internally, but on
   // its own so its failure is labelled separately from the FCM registration.
   await stage("installations", () => getId(getInstallations(app(cfg))))
-  return stage("token", () => fbGetToken(m, { vapidKey: cfg.vapidKey, serviceWorkerRegistration: registration }))
+  return stage("token", () => fbGetToken(m, tokenOptions(cfg, registration)))
 }
 
 // Revocation deliberately does not use firebase's deleteToken(): without a

@@ -2,7 +2,7 @@
  * Push opt-in for the hosted handoff page, on the existing Qiscus FCM path.
  *
  *   explicit click -> Notification permission -> FCM web token (firebase/messaging,
- *   public web config + VAPID from /push/config) -> set_user_device_token
+ *   public web config + VAPID: qismo-api per app, else /push/config) -> set_user_device_token
  *   (device_platform "web") as the handoff CUSTOMER -> SW context for filtering.
  *
  * Delivery is done by Qiscus's existing sender (qiscus-sdk-api sendPN ->
@@ -15,6 +15,12 @@
  *  - session end (conversation resolved, expiry, upstream rejection) and
  *    revoked permission remove it as well;
  *  - nothing is registered without the user's explicit click on this device.
+ *
+ * Config per app: qismo-api's per-app config wins over the Worker env for that
+ * app (appConfig.ts) and keeps its push subscription in the app's own
+ * service-worker scope. A registration remembers its scope, so teardown and a
+ * move between scopes (env root <-> per-app) always unsubscribe the scope that
+ * actually holds the subscription, whatever the config says today.
  */
 import type { PushConfig } from "../push/config"
 import { removeDeviceToken, setDeviceToken, verifyIdentityToken } from "./sdkDeviceToken"
@@ -25,6 +31,7 @@ import {
   loadSession,
   saveSession,
   sameIdentity,
+  stampSessionApi,
   stashSessionForInvite,
   takePreviousSession,
 } from "./session"
@@ -75,6 +82,12 @@ export interface SwContext {
   selfEmail: string
 }
 
+/** Which app's config to load, and from which validated qismo origin (absent = the page's own). */
+export interface ConfigTarget {
+  appId: string
+  api?: string
+}
+
 export interface PushDeps {
   storage: KeyValueStorage
   fetch: typeof fetch
@@ -82,14 +95,19 @@ export interface PushDeps {
   support(): SupportState
   permission(): NotificationPermission
   requestPermission(): Promise<NotificationPermission>
-  loadConfig(): Promise<PushConfig>
+  /** The config for one app (qismo-api per-app config wins over env), or the env config without a target. */
+  loadConfig(target?: ConfigTarget): Promise<PushConfig>
   fcm: {
     getToken(cfg: ConfiguredPushConfig): Promise<string>
-    deleteToken(cfg: ConfiguredPushConfig): Promise<void>
+    /** Unsubscribe the push subscription held by `swScope` (undefined = the root worker). */
+    deleteToken(target: { swScope?: string }): Promise<void>
   }
-  swContext: { write(ctx: SwContext | null): Promise<void> }
+  /** `scope` selects which worker's context is written (undefined = the root worker). */
+  swContext: { write(ctx: SwContext | null, scope?: string): Promise<void> }
   /** The SDK host this page was pointed at (?sdkBaseUrl=, origins.ts); absent = the ID host. */
   sdkBaseUrl?: string
+  /** The qismo-api origin this page was pointed at (?baseUrl=, origins.ts). */
+  apiBaseUrl?: string
   onState(state: PushUiState): void
   /** Operator debug trail. Never receives a token, an e-mail or message content. */
   debug?(...args: unknown[]): void
@@ -102,12 +120,16 @@ interface Registration {
   userEmail: string
   roomId: string
   at: number
+  /** Service-worker scope holding the subscription; absent = the root worker. */
+  scope?: string
 }
 
 type Creds = Pick<StoredSession, "appId" | "user" | "sdk">
 
 export class PushController {
-  private cfg: PushConfig | null = null
+  private cfgs = new Map<string, Promise<PushConfig>>()
+  /** This page load carries an invite (#t=), so its baseUrl is the session's qismo origin. */
+  private invited = false
 
   constructor(private deps: PushDeps) {}
 
@@ -115,6 +137,7 @@ export class PushController {
 
   /** A new invite (#t=) arrived: the current identity can no longer resume. */
   beginInvite(): void {
+    this.invited = true
     stashSessionForInvite(this.deps.storage)
     this.emit({ kind: "hidden" })
   }
@@ -132,7 +155,7 @@ export class PushController {
    * if a same-origin room had stored the session.
    */
   async crossOriginRoom(room?: { origin: string | null; exchange: ExchangeCapture | null }): Promise<void> {
-    const cfg = await this.config()
+    const cfg = await this.config(room?.exchange ? { appId: room.exchange.appId } : undefined)
     const origin = room?.origin ?? null
     const allowed = cfg.status === "configured" && !!origin && cfg.roomOrigins.includes(origin)
     if (!allowed || !room?.exchange) {
@@ -154,7 +177,7 @@ export class PushController {
       return
     }
     try {
-      saveSession(this.deps.storage, { appId, roomId, user: r.user, sdk: this.deps.sdkBaseUrl }, this.deps.now())
+      saveSession(this.deps.storage, { appId, roomId, user: r.user, sdk: this.deps.sdkBaseUrl, api: this.deps.apiBaseUrl }, this.deps.now())
     } catch (e) {
       this.log("cross-origin session not stored", String(e))
       await this.teardownPrevious()
@@ -166,6 +189,9 @@ export class PushController {
 
   /** The same-origin room logged in and stored the session. */
   async sessionReady(): Promise<void> {
+    // The room stored the login of an invite this page exchanged: remember
+    // which qismo-api that was, for the per-app config on a later resume.
+    if (this.invited && this.deps.apiBaseUrl) stampSessionApi(this.deps.storage, this.deps.apiBaseUrl, this.deps.now())
     const loaded = loadSession(this.deps.storage, this.deps.now())
     const prev = takePreviousSession(this.deps.storage)
     const session = loaded.state === "valid" ? loaded.session : null
@@ -282,7 +308,7 @@ export class PushController {
       this.emit({ kind: "hidden" })
       return null
     }
-    const cfg = await this.config()
+    const cfg = await this.config({ appId: session.appId, api: session.api })
     if (cfg.status !== "configured") {
       this.log("push config not usable", { missing: cfg.missing, invalid: cfg.invalid })
       this.emit({ kind: "unconfigured", missing: cfg.missing, invalid: cfg.invalid })
@@ -323,8 +349,27 @@ export class PushController {
         await removeDeviceToken(this.deps.fetch, session, reg.fcmToken)
       }
     }
-    this.saveReg({ v: 1, fcmToken: token, appId: session.appId, userEmail: session.user.email, roomId: session.roomId, at: this.deps.now() })
-    await this.safe(() => this.deps.swContext.write({ appId: session.appId, roomId: session.roomId, selfEmail: session.user.email }))
+    // The subscription moved to another worker scope (the app got, or lost,
+    // its qismo-api config): the old scope's subscription is unsubscribed and
+    // its context cleared, so it cannot deliver a second copy. Its upstream
+    // token was removed just above (a new scope always mints a new token).
+    if (reg && reg.scope !== cfg.swScope) {
+      this.log("push subscription moved", { from: reg.scope ?? "root", to: cfg.swScope ?? "root" })
+      await this.safe(() => this.deps.fcm.deleteToken({ swScope: reg.scope }))
+      await this.safe(() => this.deps.swContext.write(null, reg.scope))
+    }
+    this.saveReg({
+      v: 1,
+      fcmToken: token,
+      appId: session.appId,
+      userEmail: session.user.email,
+      roomId: session.roomId,
+      at: this.deps.now(),
+      ...(cfg.swScope ? { scope: cfg.swScope } : {}),
+    })
+    await this.safe(() =>
+      this.deps.swContext.write({ appId: session.appId, roomId: session.roomId, selfEmail: session.user.email }, cfg.swScope),
+    )
     return { kind: "enabled" }
   }
 
@@ -344,31 +389,45 @@ export class PushController {
     if (owner && this.ownedBy(reg, owner)) {
       await removeDeviceToken(this.deps.fetch, owner, reg.fcmToken)
     }
-    const cfg = await this.config()
-    if (cfg.status === "configured") await this.safe(() => this.deps.fcm.deleteToken(cfg))
+    // The scope comes from the registration itself, not from a config that
+    // may no longer load (qismo-api down, app since unconfigured).
+    await this.safe(() => this.deps.fcm.deleteToken({ swScope: reg.scope }))
     this.deps.storage.removeItem(REG_KEY)
-    await this.safe(() => this.deps.swContext.write(null))
+    await this.safe(() => this.deps.swContext.write(null, reg.scope))
   }
 
   private ownedBy(reg: Registration, who: Creds): boolean {
     return reg.appId === who.appId && reg.userEmail === who.user.email
   }
 
-  private async config(): Promise<PushConfig> {
-    if (!this.cfg) {
-      try {
-        this.cfg = await this.deps.loadConfig()
-      } catch {
-        return { status: "unconfigured", missing: [], invalid: [] }
-      }
+  private async config(target?: ConfigTarget): Promise<PushConfig> {
+    const key = target ? `${target.appId}|${target.api ?? ""}` : ""
+    let cfg = this.cfgs.get(key)
+    if (!cfg) {
+      cfg = this.deps.loadConfig(target)
+      this.cfgs.set(key, cfg)
+      // A failed load is not remembered: the next call tries again.
+      cfg.catch(() => this.cfgs.delete(key))
     }
-    return this.cfg
+    try {
+      return await cfg
+    } catch {
+      return { status: "unconfigured", missing: [], invalid: [] }
+    }
   }
 
   private loadReg(): Registration | null {
     try {
       const r = JSON.parse(this.deps.storage.getItem(REG_KEY) || "null") as Registration | null
-      if (r && r.v === 1 && typeof r.fcmToken === "string" && typeof r.appId === "string" && typeof r.userEmail === "string") return r
+      if (
+        r &&
+        r.v === 1 &&
+        typeof r.fcmToken === "string" &&
+        typeof r.appId === "string" &&
+        typeof r.userEmail === "string" &&
+        (r.scope === undefined || typeof r.scope === "string")
+      )
+        return r
     } catch {}
     if (this.deps.storage.getItem(REG_KEY) !== null) this.deps.storage.removeItem(REG_KEY)
     return null
