@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "mime-types": "^2.1.35",
-    "qiscus-sdk-core": "^2.16.8",
+    "qiscus-sdk-core": "^2.17.0",
     "quill": "^1.3.6",
     "quill-delta-to-html": "^0.12.1",
     "turndown": "^7.1.2",
