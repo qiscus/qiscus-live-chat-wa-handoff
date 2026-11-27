@@ -38,6 +38,10 @@ const webpackConfig = merge(baseWebpackConfig, {
         compress: {
           warnings: false,
           drop_console: true,
+          // uglify-es 3.x crashes ("sym.definition is not a function") on the
+          // already-minified qiscus-sdk-core >= 2.17.0 dist when collapse_vars
+          // is on. Turning it off only gives a slightly larger bundle.
+          collapse_vars: false,
         },
         output: {
           comments: false,

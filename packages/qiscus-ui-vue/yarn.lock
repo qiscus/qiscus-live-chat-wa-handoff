@@ -6656,10 +6656,10 @@ q@^1.1.2:
   resolved "https://registry.npmjs.org/q/-/q-1.5.1.tgz"
   integrity sha512-kV/CThkXo6xyFEZUugw/+pIOywXcDbFYgSct5cT3gqlbkBE1SJdwy6UQoZvodiWF/ckQLZyDE/Bu1M6gVu5lVw==
 
-qiscus-sdk-core@^2.16.8:
-  version "2.16.8"
-  resolved "https://registry.yarnpkg.com/qiscus-sdk-core/-/qiscus-sdk-core-2.16.8.tgz#671f4cf3bc6e800cfb500b087bf94e8c847758e9"
-  integrity sha512-SRywmg1m/UyXv6aS9N0HLgDq05dNerZPeY4Ay9cTGwR01Q4cgv48wQAKu0OtnEbnaItE8BAN10j4y6baN/8l1w==
+qiscus-sdk-core@^2.17.0:
+  version "2.17.0"
+  resolved "https://registry.yarnpkg.com/qiscus-sdk-core/-/qiscus-sdk-core-2.17.0.tgz#a4d3cb7a07e961b2a149544e85c1e644604aa429"
+  integrity sha512-4D9ECRAJ+I84dAG7EJ0iYez6lkfWpQarQsWckN6B1EDPuPKSKU+ZVrc69ckafB4CTSzwr/dLuByk9i0AVC1osQ==
   dependencies:
     date-fns "^1.30.1"
     lodash.debounce "^4.0.8"
